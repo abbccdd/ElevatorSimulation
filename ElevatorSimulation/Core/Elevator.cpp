@@ -107,7 +107,9 @@ bool Elevator::AddHallCall(int floor, Direction direction)
 
 bool Elevator::RemoveHallCall(int floor, Direction direction)
 {
-    if (!HasHallCall(floor, direction) || floor == m_currentFloor) return false;
+    const bool serving = floor == m_currentFloor && (m_state == ElevatorState::Stopped ||
+        m_state == ElevatorState::Boarding || m_state == ElevatorState::Alighting);
+    if (!HasHallCall(floor, direction) || serving) return false;
     (direction == Direction::Up ? m_upHallCalls : m_downHallCalls).erase(floor);
     RebuildTasks();
     return true;

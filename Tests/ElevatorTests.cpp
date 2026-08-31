@@ -200,5 +200,32 @@ int main()
         car.Advance(3); tests.Check(car.GetUpTasks().count(8)==1 && car.GetPassengerIds().size()==1,
             "pending passenger destination remains");
     });
+    tests.Run("remove departed integer floor hall in both moving directions", [&] {
+        for(int target:{2,10})
+        {
+            Elevator car(0,5,Config()); car.AddInternalTarget(target);
+            car.AddInternalTarget(target==2 ? 10 : 2);
+            car.AddHallCall(5,Direction::Up); car.AddHallCall(5,Direction::Down); car.Advance(0.5);
+            const auto before=car.GetDispatchSnapshot();
+            tests.Check(before.betweenFloors && before.elevator.currentFloor==5,"already departed integer floor");
+            tests.Check(car.RemoveHallCall(5,Direction::Up),"departed hall can be cancelled");
+            tests.Check(!car.HasHallCall(5,Direction::Up) && car.HasHallCall(5,Direction::Down),"only selected direction removed");
+            tests.Check(car.GetUpTasks().count(10)==1 && car.GetDownTasks().count(2)==1,"both internal targets remain");
+            const auto after=car.GetDispatchSnapshot();
+            tests.Check(after.elevator.state==before.elevator.state && after.elevator.direction==before.elevator.direction &&
+                after.betweenFloors,"movement unchanged");
+            tests.Near(after.remainingActionTime,before.remainingActionTime,"partial leg timer unchanged");
+        }
+    });
+    tests.Run("alighting landing cannot lose its hall call", [&] {
+        Elevator car(0,1,Config()); car.AddHallCall(1,Direction::Up);
+        car.BeginBoarding(0,3); car.Advance(3); car.FinishStop(); car.AddHallCall(3,Direction::Up);
+        car.Advance(2); car.Advance(2); tests.Check(car.BeginAlighting(0),"alighting fixture");
+        car.Advance(0.5); const auto before=car.GetDispatchSnapshot();
+        tests.Check(!car.RemoveHallCall(3,Direction::Up),"alighting hall is protected");
+        const auto after=car.GetDispatchSnapshot();
+        tests.Check(after.elevator.state==ElevatorState::Alighting && car.HasHallCall(3,Direction::Up),"service retained");
+        tests.Near(after.remainingActionTime,before.remainingActionTime,"transfer timer unchanged");
+    });
     return tests.Finish();
 }

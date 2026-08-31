@@ -288,12 +288,25 @@ int ElevatorDispatcher::SelectReassignment(const HallCallDispatchSnapshot& reque
     if (currentElevatorIndex < 0 || static_cast<std::size_t>(currentElevatorIndex) >= elevators.size())
         return InvalidElevatorId;
     const auto& owner = elevators[static_cast<std::size_t>(currentElevatorIndex)];
-    if (!std::isfinite(currentTime) ||
-        !std::isfinite(lastReassignmentTime) ||
-        (lastReassignmentTime != UnsetTime && currentTime - lastReassignmentTime < ReassignCooldownSeconds) ||
-        std::abs(static_cast<double>(owner.elevator.currentFloor) - request.floor) <= ReassignLockDistanceFloors)
+    if (!std::isfinite(currentTime) || !std::isfinite(lastReassignmentTime))
         return currentElevatorIndex;
     const auto current = ScoreSnapshot(request.floor, request.direction, owner, request.firstRequestTime, currentTime);
+    const auto& car = owner.elevator;
+    // currentFloor 在移动中是已离开的整数层，不能把它当成仍在站内服务。
+    const bool serving = !owner.betweenFloors && car.currentFloor == request.floor &&
+        (car.state == ElevatorState::Stopped || car.state == ElevatorState::Boarding ||
+            car.state == ElevatorState::Alighting);
+    if (serving) return currentElevatorIndex;
+    if (current.feasible)
+    {
+        const double delta = static_cast<double>(request.floor) - car.currentFloor;
+        const bool approaching = owner.betweenFloors &&
+            ((car.state == ElevatorState::MovingUp && car.direction == Direction::Up && delta > 0) ||
+                (car.state == ElevatorState::MovingDown && car.direction == Direction::Down && delta < 0));
+        if ((lastReassignmentTime != UnsetTime && currentTime - lastReassignmentTime < ReassignCooldownSeconds) ||
+            (approaching && std::abs(delta) <= ReassignLockDistanceFloors))
+            return currentElevatorIndex;
+    }
     using Key = std::tuple<double, double, double, std::size_t, int>;
     Key bestKey;
     double bestEta = std::numeric_limits<double>::infinity();
@@ -314,7 +327,8 @@ int ElevatorDispatcher::SelectReassignment(const HallCallDispatchSnapshot& reque
             bestEta = score.eta;
         }
     }
-    return selected != currentElevatorIndex && current.eta - bestEta >= ReassignThresholdSeconds ?
+    // 已不可服务的归属立即寻找替代，不受普通滞回限制；正在站内服务的保护仍优先。
+    return selected != currentElevatorIndex && (!current.feasible || current.eta - bestEta >= ReassignThresholdSeconds) ?
         selected : currentElevatorIndex;
 }
 

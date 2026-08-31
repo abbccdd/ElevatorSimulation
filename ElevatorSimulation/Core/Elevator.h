@@ -20,7 +20,8 @@ public:
     const std::set<int>& GetDownTasks() const noexcept { return m_downTasks; }
 
     bool AddHallCall(int floor, Direction direction);
-    // 仅撤销尚未到达的指定方向外呼；不触碰内呼、不改变当前动作及剩余时间。
+    // 仅撤销指定方向外呼；当前层 Stopped/Boarding/Alighting 禁止，已驶离可撤销。
+    // 不触碰内呼、不改变当前动作、方向及剩余时间。
     bool RemoveHallCall(int floor, Direction direction);
     bool HasHallCall(int floor, Direction direction) const;
     bool AddInternalTarget(int floor);

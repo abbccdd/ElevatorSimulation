@@ -60,17 +60,17 @@ Alighting 进行中时，当前一人仍包含在乘客数和该层下客计数�
 
 ### 带滞回的动态重分配
 
-`ScoreSnapshot` 提供可行性、ETA、Cost 和预计人数，供原选择器、改派和联合分配共用；没有新增第二套 ETA。`SelectReassignment` 在其他可行候选中按 ETA、Cost、距离、任务数、ID 选择最好者，要求 `CurrentETA - BestETA >= ReassignThresholdSeconds`。当前负责梯预测无座位时其 ETA 视为不可行；其他梯仍需通过完整容量校验。
+`ScoreSnapshot` 提供可行性、ETA、Cost 和预计人数，供原选择器、改派和联合分配共用；没有新增第二套 ETA。`SelectReassignment` 先计算原梯评分，再在其他可行候选中按 ETA、Cost、距离、任务数、ID 选择最好者。原梯可行时要求 `CurrentETA - BestETA >= ReassignThresholdSeconds`；原梯预测到请求层无座位时允许立即寻找替代，绕过普通临近锁、冷却和收益阈值，其他梯仍须通过完整容量校验。没有可行替代时保留归属，等待后续事件。
 
-阈值统一在 Dispatcher.h：收益阈值 5 仿真秒、`ReassignLockDistanceFloors=1`、`ReassignCooldownSeconds=10`。距离以当前整数楼层计算，原梯已经到达、正在服务或距请求层不超过一层均不改派；这是保守锁，即使当前方向相反也保护接近的原梯。冷却只在实际改派后开始，收益不足时保持原归属。
+阈值统一在 Dispatcher.h：收益阈值 5 仿真秒、`ReassignLockDistanceFloors=1`、`ReassignCooldownSeconds=10`。请求层真正 Stopped/Boarding/Alighting 且非 betweenFloors 始终保护，不能抢走传送中的乘客。其余情况下只有可行原梯使用普通保护：冷却自实际改派开始；临近锁要求 betweenFloors、MovingUp 且请求层在上方，或 MovingDown 且请求层在下方，并且整数楼层距离 <=1。currentFloor 相同但已驶离、相邻却正在远离或尚未移动，都不构成“正在接近”。
 
-Simulation 在新乘客、到达楼层、上下客完成及服务状态变化时置 `m_dispatchDirty`。纯 Update 帧边界不置脏，因此不会因帧率或 Aging 的连续时间变化额外抢单。一个仿真时刻只对已分配请求评估一轮，按楼层/方向稳定顺序处理；冷却期内不能反向抢回。后续状态确有变化且冷却结束时仍允许再次改派，不声称永久冻结归属。
+Simulation 在新乘客、到达楼层、上下客完成及服务状态变化时置 `m_dispatchDirty`。纯 Update 帧边界不置脏，因此不会因帧率或 Aging 的连续时间变化额外抢单。一个仿真时刻只对已分配请求评估一轮，按楼层/方向稳定顺序处理；可行原梯在冷却期内不能反向抢回。不可行原梯可在下一个事件重评估时立即改派，但仍不绕过同一时刻只评估一轮的约束。
 
-提交时仅针对已选中的两台梯准备副本：旧梯 `RemoveHallCall`，新梯 `AddHallCall`，成功后通过 noexcept 移动回写并同步 `assignedElevatorId` / `lastReassignmentTime`。准备期间失败不留下半次改派。此副本仅用于提交，候选搜索从不调用真实 Elevator 来试组合。撤销接口不改变当前动作、方向、计时或内呼任务，下一次正常事件仍由原状态机决定继续/折返。
+提交时仅针对已选中的两台梯准备副本：旧梯 `RemoveHallCall`，新梯 `AddHallCall`，成功后通过 noexcept 移动回写并同步 `assignedElevatorId` / `lastReassignmentTime`。准备期间失败不留下半次改派。此副本仅用于提交，候选搜索从不调用真实 Elevator 来试组合。撤销接口只删除指定方向 Hall Call；当前层 Stopped/Boarding/Alighting 禁止，Moving 中已离开的整数层允许撤销。它不改变当前动作、方向、计时或内呼任务，下一次正常事件仍由原状态机决定继续/折返。
 
 ### 最老三个请求的有限联合分配
 
-Simulation 按 `firstRequestTime`、队头 PassengerId、楼层/方向排序，每次规划仅取最老的 3 个未分配外呼。其他请求继续排队；零耗时服务产生新的状态变化时可继续规划下一批，否则等下一个物理事件。新增 `HallCallDispatchSnapshot` 只携带请求标识、队头时间、等待人数和 FIFO 目标层值。
+Simulation 按 `firstRequestTime`、队头 PassengerId、楼层/方向排序，每批规划仅取最老的 3 个未分配外呼。同一 DispatchCalls 内提交可行分配后重新收集 pending、重建完整快照并规划下一批，不等待下一次物理事件。直到无 pending 或当前批次 assignedCount=0 退出。成功批次至少分配一个请求且不新增 pending，因此最多初始 pending 数个成功批次，加至多一个失败批次，零时间循环必然结束。最老批次全部不可行时按约定停止，即使后面的请求可能可行，也留待后续事件。HallCallDispatchSnapshot 只携带请求标识、队头时间、等待人数和 FIFO 目标层值。
 
 每层递归先根据前面已经插入的任务重新评分全部 N 台梯，再保留最优 3 台；连同“暂不分配”分支，深度最多 3、叶组合最多 `(3+1)^3=64`，不是 N³。搜索只维护局部快照，给空闲梯插入第一项任务时记录与真实 AddHallCall 相同的起步方向和当前路段，后续请求不能重新选择该起步方向。同梯接多个请求时，已知上客和目标层均参与之后的 ETA/容量预测。
 
@@ -81,6 +81,8 @@ Simulation 按 `firstRequestTime`、队头 PassengerId、楼层/方向排序，�
 两请求反例：S=2、T=3、capacity=10，E1 在 5F、E2 在 1F 且均空闲，最老请求 4F↑→20F，随后 6F↑→20F。贪心先选 E1 响应 4F（2 秒），E1 已向下起步且存在后续服务，使 6F 请求选 E2（10 秒），总成本 12 秒。联合分配先让 E2 接 4F（6 秒）、E1 接 6F（2 秒），总成本 8 秒；不能据此推断任意客流更优。
 
 ### 固定基线对照与性能
+
+下表是 `0fade61` 对 `e7b96a6` 联合分配初版的历史实测，不是本轮边界修复后的结果。脚本仍可用于对当前源码重新测量；本轮双架构回归与压力测试结果见 README。
 
 运行 `powershell -NoProfile -ExecutionPolicy Bypass -File Tests/RunDispatchComparison.ps1 x64`。脚本通过 git archive 导出基线提交 `0fade614d5095eb14b3cb63916af876f3d2e1aa3` 的源码，只写 build，不改分支。两版使用同一 `DispatchComparison.cpp`、同一 MSVC x64 `/O2 /MD`、seed=321；每场景运行 3 次取平均运行耗时，不含编译。支持将参数改为 x86。脚本使用 UTF-8 BOM，生成批处理为 UTF-8/CRLF 并设置代码页 65001，支持中文仓库路径。
 
@@ -94,7 +96,7 @@ Simulation 按 `firstRequestTime`、队头 PassengerId、楼层/方向排序，�
 
 有限场景全部送达。高客流两版均生成 4815 人，旧/新分别送达 3381/3418，队列等待 1413/1383，仍在乘梯 21/14；已上梯均值及响应延迟总和的样本数量不同，不能直接视为全体等待改善。90 人场景存在退化，运行开销普遍增加。
 
-每次三请求搜索至多 21N 次前缀候选评分，加至多 192 次叶请求复评；单次 ETA 自身还随已有任务和可上客人数增长。`DispatchPlan` 返回 `evaluatedCombinations` / `scoreEvaluations` 供检查；60 台电梯回归确认组合仍不超过 64。每轮改派还需约 H×N 次评分（H 为已分配外呼数），少数成功改派后重建快照。约 4 秒跑完 600 仿真秒仅是本机结果，不是实时性能保证。
+每批三请求搜索至多 21N 次前缀候选评分，加至多 192 次叶请求复评；单次 ETA 自身还随已有任务和可上客人数增长。DispatchPlan 返回 evaluatedCombinations / scoreEvaluations 供检查；60 台电梯回归确认单批组合仍不超过 64。一次事件可执行多个批次，64 不是整次事件的上限。每轮改派还需约 H×N 次评分（H 为已分配外呼数），成功改派后重建快照；多批分配期间不重复改派。历史初版约 4 秒跑完 600 仿真秒仅是本机结果，不是实时性能保证。
 
 ## 3. Elevator：方向保持与动作事件
 
@@ -134,7 +136,7 @@ UI 只传真实秒；唯一乘倍速的位置是 `Simulation::Update`。本轮�
 
 同一时刻先处理全部电梯完成事件（稳定按 ID），再产生到达乘客，最后进行分配和停站处理。每次停站先下后上；开始 Boarding/Alighting 只是登记计时，完成必须等待后续事件。零耗时决策循环不会消耗 S/T，并设有依任务数计算的收敛保护，错误不会被静默忽略。
 
-Hall Call 用 `(真实楼层, Up/Down)` 作为唯一键。每个方向外呼最多一台负责梯，尚未分配时 ID=-1。同一方向后来产生的乘客加入同一 FIFO 队列；最老三个待分配外呼参与有限联合规划。已分配请求仅在事件触发且满足收益阈值、距离锁及冷却条件时改派，不在每帧反复抢单。
+Hall Call 用 `(真实楼层, Up/Down)` 作为唯一键。每个方向外呼最多一台负责梯，尚未分配时 ID=-1。同一方向后来产生的乘客加入同一 FIFO 队列；待分配外呼按最老三个连续分批规划。已分配请求在事件触发时按上述服务锁、原梯可行性及滞回条件改派，不在每帧反复抢单。
 
 上梯传送过程中乘客仍留在队头，其他电梯不能通过同一外呼抢走它；T 完成才出队并变为 Riding。满载离站后，只清除这一台电梯的外呼任务，残余队列仍存在，负责梯重置为 -1，并以剩余队头时间重新进入调度。所有候选梯预测到请求层仍满载时，请求保持未分配并在后续事件时重试。
 

@@ -346,5 +346,36 @@ int main()
         for(int frame=0;frame<80;++frame) b.Update(0.125);
         SameState(tests,a,b);
     });
+    tests.Run("one dispatch event processes six and nine pending calls", [&] {
+        for(int count:{6,9})
+        {
+            auto config=Config(); config.floorCount=30; config.capacity=20;
+            Simulation simulation; simulation.Initialize(config,42);
+            for(int floor=2;floor<2+count;++floor) simulation.AddPassenger(floor,30);
+            simulation.Start(); simulation.Update(0.01); // 无到层或传送完成事件，也无当前层停站。
+            const auto calls=simulation.GetHallCallSnapshots();
+            tests.Check(calls.size()==static_cast<std::size_t>(count),"all distinct calls remain waiting");
+            for(const auto& call:calls) tests.Check(call.assignedElevatorId!=InvalidElevatorId,"assigned without another model event");
+            tests.Check(simulation.GetStatisticsSnapshot().ridingCount==0 && simulation.ValidateState(),"ownership valid before any pickup");
+        }
+    });
+    tests.Run("entirely infeasible batch stops without zero time loop", [&] {
+        auto config=Config(); config.floorCount=20; config.capacity=1; config.simulationDuration=300;
+        Simulation simulation; simulation.Initialize(config,42);
+        simulation.AddPassenger(20,1); simulation.Start(); simulation.Update(44);
+        // 两台梯在 1F、一台在 10F；全部装载到 20F，12~14F 上行前无法释放容量。
+        simulation.AddPassenger(1,20); simulation.AddPassenger(1,20); simulation.AddPassenger(10,20);
+        simulation.Update(6.1);
+        tests.Check(simulation.GetStatisticsSnapshot().ridingCount==3,"three full upward cars");
+        for(int floor=12;floor<=14;++floor) simulation.AddPassenger(floor,20);
+        simulation.Update(0.01);
+        const auto calls=simulation.GetHallCallSnapshots();
+        tests.Check(calls.size()==3,"infeasible batch stays pending");
+        for(const auto& call:calls) tests.Check(call.assignedElevatorId==InvalidElevatorId,"no impossible assignment");
+        tests.Near(simulation.GetCurrentTime(),50.11,"clock advances after zero-assignment batch");
+        tests.Check(simulation.ValidateState(),"pending queues stay intact");
+        simulation.Update(249.89);
+        tests.Check(simulation.GetStatisticsSnapshot().arrivedCount==7 && simulation.ValidateState(),"later capacity release drains requests");
+    });
     return tests.Finish();
 }

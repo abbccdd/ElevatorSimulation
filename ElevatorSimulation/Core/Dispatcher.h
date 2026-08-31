@@ -13,7 +13,7 @@ public:
     static constexpr double MaxAgingBonus = 8.0;
     static constexpr double ReassignThresholdSeconds = 5.0; // 至少节省的仿真秒数。
     static constexpr double ReassignCooldownSeconds = 10.0; // 改派后保护期，非真实秒。
-    static constexpr int ReassignLockDistanceFloors = 1; // 已到站或只差一层不抢单。
+    static constexpr int ReassignLockDistanceFloors = 1; // 可行原梯真正朝请求层移动时的一层保护。
     static constexpr std::size_t MaxJointRequests = 3;
     static constexpr std::size_t MaxJointCandidates = 3;
     static constexpr std::size_t MaxJointCombinations = 64; // (3 台候选 + 暂不分配)^3。

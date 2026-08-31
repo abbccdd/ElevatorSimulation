@@ -442,8 +442,10 @@ int main()
     tests.Run("near and serving owners are protected", [&] {
         const auto request=Call(10,Direction::Up,{15});
         auto owner=Car(0,9,Direction::Up,{10}); owner.remainingActionTime=50;
+        owner.elevator.state=ElevatorState::MovingUp; owner.betweenFloors=true; owner.moveTimePerFloor=60;
         tests.Check(dispatcher.SelectReassignment(request,0,{owner,Car(1,10)},20)==0,"one floor proximity lock");
         owner.elevator.currentFloor=10; owner.elevator.state=ElevatorState::Boarding;
+        owner.betweenFloors=false;
         owner.reservedBoardingCount=1;
         tests.Check(dispatcher.SelectReassignment(request,0,{owner,Car(1,10)},20)==0,"boarding at request locked");
         owner.elevator.state=ElevatorState::Alighting;
@@ -459,6 +461,60 @@ int main()
         const std::vector<ElevatorDispatchSnapshot> changed{Car(0,10),Car(1,6)};
         tests.Check(dispatcher.SelectReassignment(request,1,changed,29.9,20)==1,"10 second cooldown");
         tests.Check(dispatcher.SelectReassignment(request,1,changed,30,20)==0,"cooldown expires at physical event");
+    });
+    tests.Run("departed request floor does not lock reassignment", [&] {
+        const auto request=Call(10,Direction::Up,{15});
+        auto owner=Car(0,10,Direction::Up,{10,18});
+        owner.elevator.state=ElevatorState::MovingUp; owner.betweenFloors=true; owner.remainingActionTime=1;
+        tests.Check(dispatcher.ScoreSnapshot(10,Direction::Up,owner).feasible,"departed owner still feasible after reversal");
+        tests.Check(dispatcher.SelectReassignment(request,0,{owner,Car(1,10)},20)==1,"same integer floor already departed");
+        tests.Check(dispatcher.SelectReassignment(request,0,{owner,Car(1,10)},20,19)==0,"feasible departed owner still has cooldown");
+    });
+    tests.Run("one floor away while departing is not proximity protected", [&] {
+        const auto request=Call(10,Direction::Up,{15});
+        auto below=Car(0,9,Direction::Down,{10},{2});
+        below.elevator.state=ElevatorState::MovingDown; below.betweenFloors=true; below.remainingActionTime=1;
+        auto above=Car(0,11,Direction::Up,{10,18});
+        above.elevator.state=ElevatorState::MovingUp; above.betweenFloors=true; above.remainingActionTime=1;
+        tests.Check(dispatcher.SelectReassignment(request,0,{below,Car(1,10)},20)==1,"moving away below request");
+        tests.Check(dispatcher.SelectReassignment(request,0,{above,Car(1,10)},20)==1,"moving away above request");
+        auto idle=Car(0,9); idle.moveTimePerFloor=10;
+        tests.Check(dispatcher.SelectReassignment(request,0,{idle,Car(1,10)},20)==1,"idle is not approaching");
+        auto approaching=Car(0,11,Direction::Down,{}, {10});
+        approaching.elevator.state=ElevatorState::MovingDown; approaching.betweenFloors=true;
+        approaching.moveTimePerFloor=10; approaching.remainingActionTime=8;
+        tests.Check(dispatcher.SelectReassignment(Call(10,Direction::Down,{5}),0,{approaching,Car(1,10)},20)==0,
+            "downward approach also protected despite eight second gain");
+    });
+    tests.Run("infeasible owner bypasses cooldown and approaching protection", [&] {
+        const auto request=Call(10,Direction::Up,{15});
+        auto owner=Car(0,9,Direction::Up,{10,20},{},1,1);
+        owner.elevator.state=ElevatorState::MovingUp; owner.betweenFloors=true; owner.remainingActionTime=1;
+        tests.Check(!dispatcher.ScoreSnapshot(10,Direction::Up,owner).feasible,"full through pickup floor");
+        tests.Check(dispatcher.SelectReassignment(request,0,{owner,Car(1,10)},20,19)==1,
+            "unserviceable owner bypasses both protections immediately");
+        tests.Check(dispatcher.SelectReassignment(request,0,{owner,owner},20,19)==0,"no feasible alternative keeps owner");
+    });
+    tests.Run("actual landing service remains locked even if infeasible", [&] {
+        const auto request=Call(10,Direction::Up,{15});
+        for(auto state:{ElevatorState::Stopped,ElevatorState::Boarding,ElevatorState::Alighting})
+        {
+            auto owner=Car(0,10,Direction::Up,{10},{},1,1);
+            owner.elevator.state=state;
+            if(state==ElevatorState::Boarding)
+            {
+                owner.elevator.passengerCount=0; owner.reservedBoardingCount=1;
+                owner.stopServices.push_back({15,Direction::Idle,1,0});
+            }
+            if(state==ElevatorState::Alighting) owner.stopServices.push_back({10,Direction::Idle,1,0});
+            owner.personTime=10;
+            owner.remainingActionTime=state==ElevatorState::Stopped ? 0 : 8;
+            const auto score=dispatcher.ScoreSnapshot(10,Direction::Up,owner);
+            tests.Check(state==ElevatorState::Alighting ? score.feasible && score.eta>=5 : !score.feasible,
+                "fixture would reassign without actual service lock");
+            tests.Check(dispatcher.SelectReassignment(request,0,{owner,Car(1,10)},20)==0,
+                "actual service cannot be stolen");
+        }
     });
     tests.Run("joint assignment beats a fixed greedy counterexample", [&] {
         const std::vector<ElevatorDispatchSnapshot> cars{Car(0,5),Car(1,1)};

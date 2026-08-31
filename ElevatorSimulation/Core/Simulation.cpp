@@ -258,31 +258,36 @@ bool Simulation::DispatchCalls()
             snapshots = BuildDispatchSnapshots();
         }
     }
-    std::vector<std::map<HallCallKey, HallCall>::iterator> pending;
-    for (auto call = m_hallCalls.begin(); call != m_hallCalls.end(); ++call)
-        if (call->second.assignedElevatorId == InvalidElevatorId) pending.push_back(call);
-    std::sort(pending.begin(), pending.end(), [](const auto& left, const auto& right)
+    // 每个成功批次严格减少 pending；零分配立即退出，不推进时间、不重复改派。
+    while (true)
     {
-        return std::tie(left->second.firstRequestTime, left->second.firstPassengerId, left->first) <
-            std::tie(right->second.firstRequestTime, right->second.firstPassengerId, right->first);
-    });
-    if (pending.size() > ElevatorDispatcher::MaxJointRequests)
-        pending.resize(ElevatorDispatcher::MaxJointRequests);
-    if (pending.empty()) return changed;
-    std::vector<HallCallDispatchSnapshot> requests;
-    for (auto call : pending) requests.push_back(BuildHallCallSnapshot(call->first, call->second));
-    const auto plan = m_dispatcher.PlanAssignments(requests, BuildDispatchSnapshots(), m_currentTime);
-    for (std::size_t index = 0; index < pending.size(); ++index)
-    {
-        const auto call = pending[index];
-        const auto [floor, direction] = call->first;
-        const int id = plan.elevatorIndices[index];
-        if (id != InvalidElevatorId)
+        std::vector<std::map<HallCallKey, HallCall>::iterator> pending;
+        for (auto call = m_hallCalls.begin(); call != m_hallCalls.end(); ++call)
+            if (call->second.assignedElevatorId == InvalidElevatorId) pending.push_back(call);
+        std::sort(pending.begin(), pending.end(), [](const auto& left, const auto& right)
         {
-            if (!m_elevators[static_cast<std::size_t>(id)].AddHallCall(floor, direction))
-                throw std::logic_error("Dispatcher selected an invalid hall call");
-            call->second.assignedElevatorId = id;
-            changed = true;
+            return std::tie(left->second.firstRequestTime, left->second.firstPassengerId, left->first) <
+                std::tie(right->second.firstRequestTime, right->second.firstPassengerId, right->first);
+        });
+        if (pending.size() > ElevatorDispatcher::MaxJointRequests)
+            pending.resize(ElevatorDispatcher::MaxJointRequests);
+        if (pending.empty()) break;
+        std::vector<HallCallDispatchSnapshot> requests;
+        for (auto call : pending) requests.push_back(BuildHallCallSnapshot(call->first, call->second));
+        const auto plan = m_dispatcher.PlanAssignments(requests, BuildDispatchSnapshots(), m_currentTime);
+        if (plan.assignedCount == 0) break;
+        for (std::size_t index = 0; index < pending.size(); ++index)
+        {
+            const auto call = pending[index];
+            const auto [floor, direction] = call->first;
+            const int id = plan.elevatorIndices[index];
+            if (id != InvalidElevatorId)
+            {
+                if (!m_elevators[static_cast<std::size_t>(id)].AddHallCall(floor, direction))
+                    throw std::logic_error("Dispatcher selected an invalid hall call");
+                call->second.assignedElevatorId = id;
+                changed = true;
+            }
         }
     }
     return changed;
