@@ -14,3 +14,27 @@ Passenger::Passenger(PassengerId id, int startFloor, int targetFloor, double req
         throw std::invalid_argument("Invalid passenger data");
     }
 }
+
+bool Passenger::MarkBoarded(int elevatorId, double time)
+{
+    if (m_state != PassengerState::Waiting || elevatorId < 0 || !std::isfinite(time) || time < m_requestTime)
+        return false;
+    m_elevatorId = elevatorId;
+    m_boardTime = time;
+    m_state = PassengerState::Riding;
+    return true;
+}
+
+bool Passenger::MarkArrived(double time)
+{
+    if (m_state != PassengerState::Riding || !std::isfinite(time) || time < m_boardTime) return false;
+    m_arrivalTime = time;
+    m_state = PassengerState::Arrived;
+    return true;
+}
+
+PassengerSnapshot Passenger::GetSnapshot() const
+{
+    return { m_id, m_startFloor, m_targetFloor, m_direction, m_state,
+        m_requestTime, m_boardTime, m_arrivalTime, m_elevatorId };
+}

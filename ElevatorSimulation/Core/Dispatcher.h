@@ -12,4 +12,9 @@ public:
     // 无副作用，不接管对象所有权，不推进仿真时间。
     int SelectElevator(int requestFloor, Direction requestDirection,
         const std::vector<Elevator>& elevators) const;
+
+    // 同一评分实现的快照入口，便于测试，不需暴露可写 Elevator。
+    // 返回容器下标；同分时按快照中的 id 排序。
+    int SelectFromSnapshots(int requestFloor, Direction requestDirection,
+        const std::vector<ElevatorDispatchSnapshot>& elevators) const;
 };

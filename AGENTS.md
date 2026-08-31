@@ -1,6 +1,6 @@
 # 项目开发规则
 
-这是 Windows / Visual Studio 2022 / C++17 / MFC 的“多电梯群控调度仿真系统”，当前阶段为多人协作的工程准备。
+这是 Windows / Visual Studio 2022 / C++17 / MFC 的“多电梯群控调度仿真系统”。已实现课程设计核心仿真，正式动态 UI 待后续开发。
 
 ## 必须遵守
 
@@ -16,9 +16,15 @@
 - 新增核心 `.cpp` 要同时加入 `.vcxproj` / `.filters`，对该文件禁用 PCH；保留 MFC 文件的 PCH 设置。
 - 新增 C++ 文件 UTF-8，各配置 `/utf-8`；原 `.rc` 保留 UTF-16，不随意改变资源编码。
 - PascalCase 类名/函数，camelCase 局部变量，`m_` 成员；中文注释，RAII、STL、enum class、nullptr，新增代码避免裸 new/delete。
-- 当前不要提前实现完整群控、单梯状态机、随机概率模型、正式动画；后续用户明确要求相应模块后再实施。
+- 用户已授权实现 Dispatcher/Elevator/Simulation，并对 Passenger/Floor/Statistics 作必要适配；不要把已实现功能退回占位，也不要擅自扩展正式动画或高级 AI 策略。
+- Dispatcher 只读评分；同向顺路→空闲→其余忙碌，满载（含上梯预留）不分配。禁止直接操作 Elevator 的状态。
+- Elevator 仅执行已接受任务，层间运动和上下客中不能因新请求反向。Advance 最多返回一个事件，调用方必须处理其余时间预算。
+- 时间全部以仿真秒处理，只有 Simulation::Update 将真实秒乘一次 simulationSpeed。同步处理所有电梯事件，不按电梯逐台推进整帧。
+- passengerRate 单位为全楼人数/仿真秒，Poisson 指数间隔。固定种子用于可重复测试；Reset 保留本轮 seed。
+- Hall Call 由 Simulation 按(楼层,方向)唯一管理；满载剩余人数留队重分配。上梯 T 完成才出队，下梯 T 完成才从活动注册表删除。
+- 截止前允许产生乘客，截止时完成的动作计入，但不推进到总时长之后。统计均值口径见 docs/AlgorithmDesign.md，不把未完成样本悄悄计入已完成均值。
 - 未实现部分必须明确 TODO，不能将占位返回值或零统计声称为完整功能。
-- 基础验证：生成现有解决方案，运行 `Tests/RunCoreSmokeTests.cmd`；测试无需另建 VS 工程或安装库。
+- 基础验证：原 `Tests/RunCoreSmokeTests.cmd` 的 406 项检查不得删除。运行 `Tests/RunCoreTests.cmd All x64`（及 x86），生成 Debug/Release × x64/x86 四配置。测试无需另建 VS 工程或安装库。
 
 ## 模块负责人
 

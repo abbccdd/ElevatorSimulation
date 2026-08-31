@@ -127,4 +127,24 @@
       <Filter>Development</Filter>
     </None>
   </ItemGroup>
+  <ItemGroup>
+    <None Include="..\Tests\TestSupport.h">
+      <Filter>Development</Filter>
+    </None>
+    <None Include="..\Tests\DispatcherTests.cpp">
+      <Filter>Development</Filter>
+    </None>
+    <None Include="..\Tests\ElevatorTests.cpp">
+      <Filter>Development</Filter>
+    </None>
+    <None Include="..\Tests\SimulationTests.cpp">
+      <Filter>Development</Filter>
+    </None>
+    <None Include="..\Tests\RunCoreTests.cmd">
+      <Filter>Development</Filter>
+    </None>
+    <None Include="..\docs\AlgorithmDesign.md">
+      <Filter>Development</Filter>
+    </None>
+  </ItemGroup>
 </Project>

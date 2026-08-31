@@ -17,8 +17,10 @@ public:
     double GetBoardTime() const noexcept { return m_boardTime; }
     double GetArrivalTime() const noexcept { return m_arrivalTime; }
 
-    // TODO(A/D): 增加合法的上梯/到达状态转换接口，统一记录仿真时间。
-    // 随机创建属于 Simulation 的后续流程，不在构造函数中生成随机数。
+    // 状态仅在一人的 T 秒传送完成时转换；时间是仿真秒。
+    bool MarkBoarded(int elevatorId, double time);
+    bool MarkArrived(double time);
+    PassengerSnapshot GetSnapshot() const;
 
 private:
     PassengerId m_id;
@@ -29,4 +31,5 @@ private:
     double m_requestTime;
     double m_boardTime = UnsetTime;
     double m_arrivalTime = UnsetTime;
+    int m_elevatorId = InvalidElevatorId;
 };
