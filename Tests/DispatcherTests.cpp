@@ -21,8 +21,9 @@ int main()
 {
     TestSuite tests("Dispatcher");
     const ElevatorDispatcher dispatcher;
-    const auto select = [&](int floor, Direction direction, const std::vector<ElevatorDispatchSnapshot>& cars)
-    { return dispatcher.SelectFromSnapshots(floor, direction, cars); };
+    const auto select = [&](int floor, Direction direction, const std::vector<ElevatorDispatchSnapshot>& cars,
+        double requestTime = UnsetTime, double currentTime = UnsetTime)
+    { return dispatcher.SelectFromSnapshots(floor, direction, cars, requestTime, currentTime); };
     tests.Run("nearest idle", [&] { tests.Check(select(7, Direction::Up,
         { Car(0,1), Car(1,6), Car(2,20) }) == 1, "nearest idle"); });
     tests.Run("idle at landing", [&] { tests.Check(select(4, Direction::Down,
@@ -62,6 +63,36 @@ int main()
         auto boarding=Car(0,9,Direction::Up,{15}); boarding.elevator.state=ElevatorState::Boarding;
         boarding.personTime=10; boarding.remainingActionTime=8; boarding.reservedBoardingCount=1;
         tests.Check(select(10,Direction::Up,{boarding,Car(1,7)})==1,"remaining action belongs in pickup ETA");
+    });
+    tests.Run("multiple passenger events beat fixed stop estimate", [&] {
+        auto route=Car(0,5,Direction::Up,{7,8,15});
+        route.stopServices.push_back({7,Direction::Idle,2,0});
+        route.stopServices.push_back({8,Direction::Up,0,3});
+        // Route ETA = 10 seconds movement + 15 seconds for five known transfers;
+        // the idle car reaches the request in 18 seconds.
+        tests.Check(select(10,Direction::Up,{route,Car(1,1)})==1,"all known passenger transfers count");
+    });
+    tests.Run("known alighting count affects ETA", [&] {
+        auto route=Car(0,5,Direction::Up,{7,15});
+        route.stopServices.push_back({7,Direction::Idle,3,0});
+        tests.Check(select(10,Direction::Up,{route,Car(1,1)})==1,"known alighting passengers add T each");
+    });
+    tests.Run("aging bonus grows and is capped", [&] {
+        tests.Near(dispatcher.GetAgingBonus(10,10),0,"no waiting bonus");
+        tests.Near(dispatcher.GetAgingBonus(10,20),0.5,"continuous aging rate");
+        tests.Near(dispatcher.GetAgingBonus(10,1000),ElevatorDispatcher::MaxAgingBonus,"aging cap");
+        tests.Near(dispatcher.GetAgingBonus(20,10),0,"invalid time order");
+    });
+    tests.Run("aging admits a reasonable reverse route", [&] {
+        const auto reverse=Car(0,11,Direction::Down,{}, {10});
+        const auto idle=Car(1,6);
+        tests.Check(select(10,Direction::Up,{reverse,idle},0,0)==1,"fresh request prefers idle");
+        tests.Check(select(10,Direction::Up,{reverse,idle},0,200)==0,"old request receives bounded relief");
+    });
+    tests.Run("aging cannot force an obviously poor route", [&] {
+        const auto reverse=Car(0,20,Direction::Down,{}, {1});
+        const auto idle=Car(1,9);
+        tests.Check(select(10,Direction::Up,{reverse,idle},0,10000)==1,"cap does not erase huge ETA");
     });
     tests.Run("equal cost prefers lower ETA before distance and ID", [&] {
         auto faster=Car(1,9,Direction::Up,{15},{},5); faster.personTime=4;

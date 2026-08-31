@@ -234,7 +234,8 @@ bool Simulation::DispatchCalls()
     for (auto call : pending)
     {
         const auto [floor, direction] = call->first;
-        const int id = m_dispatcher.SelectElevator(floor, direction, m_elevators);
+        const int id = m_dispatcher.SelectElevator(floor, direction, m_elevators,
+            call->second.firstRequestTime, m_currentTime);
         if (id != InvalidElevatorId)
         {
             if (!m_elevators[static_cast<std::size_t>(id)].AddHallCall(floor, direction))

@@ -97,6 +97,15 @@ struct ElevatorDispatchSnapshot
     int reservedBoardingCount = 0;
     std::vector<int> upTasks;
     std::vector<int> downTasks;
+    struct StopService
+    {
+        int floor = 1;
+        Direction direction = Direction::Idle;
+        int alightingCount = 0;
+        int boardingCount = 0;
+    };
+    // 已知下客人数与已分配外呼的保守上客人数；未知队列不伪造精确值。
+    std::vector<StopService> stopServices;
 };
 
 // 单梯返回事件，Simulation 负责用统一时钟登记 Passenger 和 Statistics。

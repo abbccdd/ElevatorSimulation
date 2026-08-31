@@ -42,6 +42,24 @@ ElevatorDispatchSnapshot Elevator::GetDispatchSnapshot() const
     snapshot.reservedBoardingCount = m_state == ElevatorState::Boarding ? 1 : 0;
     snapshot.upTasks.assign(m_upTasks.begin(), m_upTasks.end());
     snapshot.downTasks.assign(m_downTasks.begin(), m_downTasks.end());
+    std::set<int> serviceFloors(m_upTasks.begin(), m_upTasks.end());
+    serviceFloors.insert(m_downTasks.begin(), m_downTasks.end());
+    for (const auto& destination : m_destinations)
+        serviceFloors.insert(destination.second);
+    for (int floor : serviceFloors)
+    {
+        int alightingCount = 0;
+        for (const auto& destination : m_destinations)
+            if (destination.second == floor) ++alightingCount;
+        if (alightingCount != 0)
+            snapshot.stopServices.push_back({ floor, Direction::Idle, alightingCount, 0 });
+        if (m_upHallCalls.count(floor) != 0)
+            snapshot.stopServices.push_back({ floor, Direction::Up, 0, 1 });
+        if (m_downHallCalls.count(floor) != 0)
+            snapshot.stopServices.push_back({ floor, Direction::Down, 0, 1 });
+        if (alightingCount == 0 && m_upHallCalls.count(floor) == 0 && m_downHallCalls.count(floor) == 0)
+            snapshot.stopServices.push_back({ floor, Direction::Idle, 0, 0 });
+    }
     if (m_state == ElevatorState::Boarding)
     {
         auto& tasks = m_direction == Direction::Up ? snapshot.upTasks : snapshot.downTasks;
