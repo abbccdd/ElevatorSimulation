@@ -104,7 +104,7 @@ int main()
         simulation.AddPassenger(1,6); simulation.AddPassenger(6,1);
         simulation.Start(); simulation.Update(0.01);
         // 首两台已经预留最后座位，第三个请求才能按容量规则分给中间梯。
-        // 同一批提交三个请求会合法触发“顺路优先于空闲”，不能假设自动均分。
+        // 固定分配时机以验证预留容量；同一批请求的选择由各梯成本决定，不保证均分。
         simulation.AddPassenger(3,5); simulation.Update(3.1);
         tests.Check(simulation.GetStatisticsSnapshot().ridingCount==3,"three transfers overlap in simulated time");
         simulation.Update(30); const auto stats=simulation.GetStatisticsSnapshot();

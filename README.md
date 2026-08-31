@@ -27,7 +27,7 @@ ElevatorSimulation/
 │  │  ├─ Passenger.h / Passenger.cpp       乘客模型、状态转换与时间戳
 │  │  ├─ Floor.h / Floor.cpp               楼层与上下行 ID FIFO 队列
 │  │  ├─ Elevator.h / Elevator.cpp         方向保持、S/T 计时与上下客状态机
-│  │  ├─ Dispatcher.h / Dispatcher.cpp     分级优先与 LOOK 路线 ETA 群控
+│  │  ├─ Dispatcher.h / Dispatcher.cpp     Cost/ETA 与方向成本的 LOOK 群控
 │  │  └─ Simulation.h / Simulation.cpp     事件编排、随机到达、外呼归属与快照
 │  ├─ Statistics/
 │  │  └─ Statistics.h / Statistics.cpp     事件统计与只读快照
@@ -144,7 +144,7 @@ Update 在下一个乘客到达、任意电梯动作完成、当前帧目标时�
 | --- | --- | --- |
 | A | Core/Passenger.*、Core/Floor.* | 已补齐状态转换、FIFO 与 ID 校验；后续可扩展交通输入方式 |
 | B | Core/Elevator.* | 已实现方向保持、顺路停靠、S/T 计时、容量及上下客 |
-| C | Core/Dispatcher.* | 已实现顺路→空闲→其他忙碌分级，LOOK 路线 ETA + 负载成本与稳定 tie-break |
+| C | Core/Dispatcher.* | 已实现顺路与空闲统一比较 Cost/ETA，反向忙碌增加有限方向成本；LOOK 路线、负载与稳定 tie-break |
 | D | Core/Simulation.* | 已集成种子、Poisson 到达、手工注入、唯一外呼归属、事件推进和清理 |
 | E | ElevatorSimulationDlg.* 与必要资源 | 仍待正式参数输入、开始/暂停/继续/重置、倍速、动态刷新与动画 |
 | F | Statistics/*、Tests/* | 已接入事件统计、回归及压力测试；后续扩展算法对照场景和展示 |
@@ -195,14 +195,14 @@ Dispatcher 无副作用，满载或无合理候选返回 -1。Elevator 只执行
 | 验证项 | 结果 |
 | --- | --- |
 | 原 CoreSmokeTests | 406 项检查通过，未删除任何检查 |
-| Dispatcher | 27 个场景、40 项断言通过 |
+| Dispatcher | 40 个场景、67 项断言通过 |
 | Elevator（含群控联合与最近距离对照） | 22 个场景、62 项断言通过 |
-| Simulation（含随机、压力、所有权） | 33 个场景、1,973 项断言通过 |
-| 新增测试架构 | x64 与 x86 均通过，合计每个架构 82 场景 / 2,075 断言 |
+| Simulation（含随机、压力、所有权） | 33 个场景、1,987 项断言通过 |
+| 新增测试架构 | x64 与 x86 均通过，合计每个架构 95 场景 / 2,116 断言 |
 | Debug x64 / Release x64 / Debug x86 / Release x86 全量重新生成 | 全部 0 警告、0 错误 |
 | 2,000 人有限批次 | 足够时长后全部送达，无活动 ID 或外呼遗留 |
-| 高客流：seed=321，λ=8，600 秒 | 生成 4,815，送达 3,189，等待 1,617，乘梯 9，人数守恒 |
-| 一小时：seed=987，λ=0.6 | 生成 2,186，送达 2,173，全部采样一致性检查通过 |
+| 高客流：seed=321，λ=8，600 秒 | 生成 4,815，送达 3,204，等待 1,589，乘梯 22，人数守恒 |
+| 一小时：seed=987，λ=0.6 | 生成 2,186，送达 2,174，全部采样一致性检查通过 |
 | 固定任务对照 | 同向路线实际响应 10 秒，纯最近距离选择需 30 秒；不代表所有客流均优 |
 
 具体配置见 Tests/SimulationTests.cpp。本轮日志位于 `build/verification/core-implementation/`；主 App、PCH、`.rc`、Resource.h 和布局未修改，Dialog 仅更新三处提示文字。

@@ -20,34 +20,41 @@
 4. [Nidec / MCE, Motion Group Control 技术手册](https://acim.nidec.com/elevators/-/media/Project/Nidec/NidecElevator/MCE/PDFs/Motion-Group-Control-B5.pdf)：以响应时间及时间形式的附加项表达分配偏好。本项目未复制其厂商参数。
 5. [Peters 等，A Systematic Methodology for the Generation of Lift Passengers under a Poisson Batch Arrival Process](https://joomla.peters-research.com/index.php/support/articles-and-papers/163-a-systematic-methodology-for-the-generation-of-lift-passengers-under-a-poisson-batch-arrival-process)：参考指数间隔与乘客到达模型比较。本项目取单人齐次 Poisson 简化，没有使用批量到达或固定总人数的时间伸缩校正。
 
-## 2. Dispatcher：优先等级 + LOOK 路线 ETA
+## 2. Dispatcher：统一 Cost/ETA + LOOK 路线
 
 `SelectElevator(floor, direction, const vector<Elevator>&)` 保留原签名与无副作用职责。先生成只读 `ElevatorDispatchSnapshot`，再调用同一套 `SelectFromSnapshots` 评分。后者也用于构造明确的测试场景，无需为测试开放 private 字段。
 
 候选排除：非法楼层/方向、顶层向上或底层向下、无剩余座位（含正在上梯的一席预留）、非有限时间参数、无效任务快照。不假设当前满载梯到站前一定有人下梯；全组无法分配时返回 `InvalidElevatorId`。
 
+空闲梯与同向顺路梯不再使用绝对优先等级，而是统一计算成本。方向因素保留为有限的策略成本：同向顺路和空闲梯方向成本为 0；请求不在当前行进方向前方的忙碌梯增加 `S+T`。实际折返、中间停靠和当前动作剩余时间仍由 ETA 计算，因此该附加项用于表达反向/非顺路风险，不是把顺路梯硬排在空闲梯之前。
+
 比较键按以下顺序排列，前一项不同就不比较后一项：
 
-1. 优先等级：0 同向且前方/当前可服务楼层，1 空闲，2 其余忙碌梯。
-2. Cost（仿真秒）。
+1. Cost（仿真秒）= ETA + 方向成本 + 负载成本。
+2. ETA（仿真秒），即当前动作完成、LOOK 路线移动及已有中间停站服务的预计接客时间。
 3. 当前整数楼层至请求楼层的绝对距离。
 4. 上下行任务集合的元素总数。
 5. 电梯 ID；完全相同的重复 ID 输入最终保持容器先后顺序。
 
 ```text
-Cost = 剩余当前动作时间
+Cost = ETA
      + 按 LOOK 路线到请求的移动时间
      + 请求之前预演的已有停靠数 × T
      + (当前载客人数 + 上梯预留人数) / K × T
+     + 非顺路忙碌梯的方向成本（S+T）
 ```
 
 空闲梯直接按距离 × S 估计；层间运行的电梯必须先完成当前剩余路段，然后再预演。任务只复制到局部集合：把新请求加入其方向，先走完当前方向，再考虑反向；同向但位于后方的请求必要时经历再次折返。中间停靠暂按每站处理一人估计；当前仍在服务的站点与剩余动作可能产生保守估计。这是可解释的 ETA 近似，不是未来队列的精确模拟。
 
-方向惩罚与非顺路惩罚由优先等级和实际绕行距离表达，不另加任意大分数。负载附加项被限制在一个 T 的范围内，任务影响通过停靠服务时间表达。所有时间来自实际 S/T 配置。
+方向成本与实际绕行距离共同表达方向因素，不使用任意大的绝对优先级。负载附加项被限制在一个 T 的范围内，任务影响通过停靠服务时间表达。所有时间来自实际 S/T 配置。
+
+> 下方关于“严格等级优先”的文字是上一版策略的历史记录；当前规则以本节开头的统一 Cost/ETA 说明及第 3 节前的 Dispatcher 规则注释为准。
 
 **严格等级优先是题目策略，不是最短等待时间的全局优化。** 因此一台较远的顺路梯也可能优先于就在呼叫楼层的空闲梯。持续高负载时这可能不如完全按 ETA 排序，不能承诺所有客流均优于最近梯。测试中的可解释反例：5F 上行至 15F 的梯响应 10F↑ 用 10 秒；仅距呼叫 1 层、但必须先下行至 2F 的 9F 梯需要 30 秒。两者均由真实单梯状态机推进获得，不只是比较评分。
 
 ## 3. Elevator：方向保持与动作事件
+
+> **当前 Dispatcher 规则（覆盖本节前述历史说明）：** 空闲梯与同向顺路梯统一按 `Cost`、`ETA`、距离、任务数、ID 比较；非顺路忙碌梯增加有限 `S+T` 方向成本。方向因素不再构成绝对优先级，因而请求楼层的空闲梯可以优先于远处顺路梯。
 
 沿用原状态，不添加第二套运行枚举：
 

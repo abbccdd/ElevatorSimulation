@@ -78,7 +78,7 @@ int ElevatorDispatcher::SelectFromSnapshots(int requestFloor, Direction requestD
 {
     if (requestFloor < 1 || !IsTravelDirection(requestDirection))
         return InvalidElevatorId;
-    using Score = std::tuple<int, double, double, std::size_t, int>;
+    using Score = std::tuple<double, double, double, std::size_t, int>;
     Score bestScore;
     int selected = InvalidElevatorId;
     for (std::size_t index = 0; index < elevators.size(); ++index)
@@ -114,15 +114,18 @@ int ElevatorDispatcher::SelectFromSnapshots(int requestFloor, Direction requestD
             requestFloor < car.currentFloor;
         const bool onWay = !idle && car.direction == requestDirection &&
             (ahead || (!snapshot.betweenFloors && requestFloor == car.currentFloor));
-        const int priority = onWay ? 0 : (idle ? 1 : 2);
         const double eta = EstimatePickupTime(requestFloor, requestDirection, snapshot);
-        // 负载附加最多为一人的服务时间；方向/非顺路由等级和实际绕行表达。
+        // 顺路与空闲统一比较成本。非顺路忙碌梯增加 S+T 的有限策略成本，
+        // 实际返程/折返耗时已计入 ETA；该附加项不代表额外物理耗时。
+        const double directionCost = idle || onWay ? 0.0 :
+            snapshot.moveTimePerFloor + snapshot.personTime;
+        // 负载附加最多为一人的服务时间；任务数同时影响停靠 ETA 和同分排序。
         const double loadCost = snapshot.personTime *
             (static_cast<double>(car.passengerCount) + snapshot.reservedBoardingCount) / car.capacity;
-        const double cost = eta + loadCost;
+        const double cost = eta + loadCost + directionCost;
         if (!std::isfinite(cost))
             continue;
-        const Score score{ priority, cost, std::abs(static_cast<double>(requestFloor) - car.currentFloor),
+        const Score score{ cost, eta, std::abs(static_cast<double>(requestFloor) - car.currentFloor),
             snapshot.upTasks.size() + snapshot.downTasks.size(), car.id };
         if (selected == InvalidElevatorId || score < bestScore)
         {

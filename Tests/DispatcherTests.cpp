@@ -28,11 +28,72 @@ int main()
     tests.Run("idle at landing", [&] { tests.Check(select(4, Direction::Down,
         { Car(0,8), Car(1,4) }) == 1, "same floor"); });
     tests.Run("up on-way beats closer opposite", [&] { tests.Check(select(10, Direction::Up,
-        { Car(0,5,Direction::Up,{15}), Car(1,11,Direction::Down,{}, {2}) }) == 0, "direction priority"); });
+        { Car(0,5,Direction::Up,{15}), Car(1,11,Direction::Down,{}, {2}) }) == 0, "opposite route costs more"); });
     tests.Run("down on-way beats closer opposite", [&] { tests.Check(select(10, Direction::Down,
-        { Car(0,15,Direction::Down,{}, {2}), Car(1,9,Direction::Up,{19}) }) == 0, "direction priority"); });
-    tests.Run("on-way before idle", [&] { tests.Check(select(10, Direction::Up,
-        { Car(0,5,Direction::Up,{15}), Car(1,10) }) == 0, "documented class priority"); });
+        { Car(0,15,Direction::Down,{}, {2}), Car(1,9,Direction::Up,{19}) }) == 0, "opposite route costs more"); });
+    tests.Run("idle at request beats distant on-way", [&] { tests.Check(select(10, Direction::Up,
+        { Car(0,1,Direction::Up,{15}), Car(1,10) }) == 1, "immediate idle response"); });
+    tests.Run("near idle beats distant on-way", [&] { tests.Check(select(10, Direction::Up,
+        { Car(0,1,Direction::Up,{15}), Car(1,9) }) == 1, "compare ETA across idle and on-way"); });
+    tests.Run("fast on-way beats distant idle", [&] { tests.Check(select(10, Direction::Up,
+        { Car(0,9,Direction::Up,{15}), Car(1,1) }) == 0, "idle has no absolute priority either"); });
+    tests.Run("downward idle and on-way use same cost", [&] {
+        tests.Check(select(10,Direction::Down,{Car(0,20,Direction::Down,{}, {1}),Car(1,10)})==1,"idle at down call");
+        tests.Check(select(10,Direction::Down,{Car(0,20,Direction::Down,{}, {1}),Car(1,11)})==1,"near idle down call");
+        tests.Check(select(10,Direction::Down,{Car(0,11,Direction::Down,{}, {1}),Car(1,20)})==0,"fast down on-way");
+    });
+    tests.Run("reasonable idle beats opposite busy", [&] { tests.Check(select(10,Direction::Up,
+        {Car(0,11,Direction::Down,{}, {2}),Car(1,9)})==1,"opposite must finish accepted route"); });
+    tests.Run("opposite surcharge is significant but finite", [&] {
+        // 反向梯预计 5 秒接客：移动 2 秒 + 已有反向停站 3 秒；S+T 附加后成本 10。
+        const auto opposite=Car(0,11,Direction::Down,{}, {10});
+        tests.Check(select(10,Direction::Up,{opposite,Car(1,6)})==1,"idle ETA 8 beats opposite cost 10");
+        tests.Check(select(10,Direction::Up,{opposite,Car(1,1)})==0,"cost 10 can still beat idle ETA 18");
+    });
+    tests.Run("same-direction behind penalty is not absolute", [&] { tests.Check(select(10,Direction::Up,
+        {Car(0,11,Direction::Up,{12}),Car(1,1)})==0,"short remaining sweep can beat distant idle"); });
+    tests.Run("load cost can outweigh faster on-way ETA", [&] {
+        auto loaded=Car(0,9,Direction::Up,{15},{},9); loaded.personTime=10;
+        tests.Check(select(10,Direction::Up,{loaded,Car(1,8)})==1,"ETA 2 plus load 9 loses to idle 4");
+    });
+    tests.Run("intermediate stops compared against idle", [&] { tests.Check(select(10,Direction::Up,
+        {Car(0,6,Direction::Up,{7,8,9,15}),Car(1,4)})==1,"nearer moving car has more pickup delay"); });
+    tests.Run("remaining boarding compared against idle", [&] {
+        auto boarding=Car(0,9,Direction::Up,{15}); boarding.elevator.state=ElevatorState::Boarding;
+        boarding.personTime=10; boarding.remainingActionTime=8; boarding.reservedBoardingCount=1;
+        tests.Check(select(10,Direction::Up,{boarding,Car(1,7)})==1,"remaining action belongs in pickup ETA");
+    });
+    tests.Run("equal cost prefers lower ETA before distance and ID", [&] {
+        auto faster=Car(1,9,Direction::Up,{15},{},5); faster.personTime=4;
+        tests.Check(select(10,Direction::Up,{Car(0,8,Direction::Up,{15}),faster})==1,"both cost 4, ETA 2 beats 4");
+    });
+    tests.Run("equal cost and ETA prefer distance before ID", [&] {
+        auto farther=Car(0,8,Direction::Up,{15}); farther.moveTimePerFloor=1;
+        tests.Check(select(10,Direction::Up,{farther,Car(1,9,Direction::Up,{15})})==1,"both ETA 2, distance 1 beats 2");
+    });
+    tests.Run("equal cost ETA and distance prefer fewer tasks", [&] { tests.Check(select(10,Direction::Up,
+        {Car(0,9,Direction::Up,{15,16}),Car(1,9,Direction::Up,{15})})==1,"post-pickup task count before ID"); });
+    tests.Run("real snapshot selection leaves elevator state untouched", [&] {
+        SimulationConfig config;
+        std::vector<Elevator> cars{Elevator(0,1,config),Elevator(1,10,config)};
+        cars[0].AddInternalTarget(15); cars[0].Advance(0.5);
+        const auto movingBefore=cars[0].GetDispatchSnapshot();
+        const auto idleBefore=cars[1].GetDispatchSnapshot();
+        for(int repeat=0;repeat<10;++repeat)
+            tests.Check(dispatcher.SelectElevator(10,Direction::Up,cars)==1,"repeatable real idle choice");
+        const auto movingAfter=cars[0].GetDispatchSnapshot();
+        const auto idleAfter=cars[1].GetDispatchSnapshot();
+        tests.Check(movingBefore.elevator.currentFloor==movingAfter.elevator.currentFloor &&
+            movingBefore.elevator.direction==movingAfter.elevator.direction &&
+            movingBefore.elevator.state==movingAfter.elevator.state &&
+            movingBefore.remainingActionTime==movingAfter.remainingActionTime &&
+            movingBefore.upTasks==movingAfter.upTasks && movingBefore.downTasks==movingAfter.downTasks,
+            "dispatch cannot change route, state or remaining timer");
+        tests.Check(idleBefore.elevator.currentFloor==idleAfter.elevator.currentFloor &&
+            idleAfter.elevator.state==ElevatorState::Idle && idleAfter.elevator.direction==Direction::Idle &&
+            idleAfter.remainingActionTime==0 && idleAfter.upTasks.empty() && idleAfter.downTasks.empty() &&
+            cars[0].GetPassengerIds().empty() && cars[1].GetPassengerIds().empty(),"dispatch does not assign or move cars");
+    });
     tests.Run("full on-way rejected", [&] { tests.Check(select(10, Direction::Up,
         { Car(0,5,Direction::Up,{15},{},10), Car(1,1) }) == 1, "full bypass"); });
     tests.Run("boarding reserves last seat", [&] { auto car=Car(0,5,Direction::Up,{15},{},9);
