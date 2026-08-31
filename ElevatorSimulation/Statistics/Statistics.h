@@ -9,9 +9,14 @@ public:
     void Reset(int elevatorCount);
     StatisticsSnapshot GetSnapshot() const;
 
-    // TODO(F/D): 接入生成、上梯、到达和移动事件，计算统计而非扫描已删除乘客。
-    // 平均值的样本口径、结束时未完成乘客的处理需先在 README 中约定。
+    void PassengerCreated();
+    void PassengerBoarded(double waitingTime);
+    void PassengerArrived(int elevatorId, double rideTime);
+    void ElevatorMoved(int elevatorId, bool empty);
+    void ElevatorTimeElapsed(int elevatorId, double seconds, ElevatorState state, bool full);
 
 private:
     StatisticsSnapshot m_snapshot;
+    double m_waitingTimeSum = 0.0;
+    double m_rideTimeSum = 0.0;
 };

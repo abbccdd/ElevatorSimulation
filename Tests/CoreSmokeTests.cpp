@@ -190,8 +190,8 @@ int main()
         const ElevatorDispatcher dispatcher;
         Check(dispatcher.SelectElevator(1, Direction::Up, {}) == InvalidElevatorId,
             "dispatcher reports unassigned");
-        Check(dispatcher.SelectElevator(1, Direction::Up, { Elevator(0, 1, 15) }) == InvalidElevatorId,
-            "placeholder does not pretend to dispatch");
+        Check(dispatcher.SelectElevator(1, Direction::Up, { Elevator(0, 1, 15) }) == 0,
+            "implemented dispatcher assigns a valid idle elevator");
         std::cout << "PASS: " << checkCount << " core smoke checks (no MFC dependency).\n";
         return 0;
     }

@@ -99,7 +99,7 @@ BOOL CElevatorSimulationDlg::OnInitDialog()
 	SetIcon(m_hIcon, TRUE);			// 设置大图标
 	SetIcon(m_hIcon, FALSE);		// 设置小图标
 
-	SetWindowTextW(L"多电梯群控调度仿真系统 - 工程准备");
+	SetWindowTextW(L"多电梯群控调度仿真系统 - 核心已就绪");
 	if (!m_simulation.Initialize(SimulationConfig{}))
 	{
 		AfxMessageBox(L"默认参数初始化失败，请检查 Simulation::GetLastError()。", MB_ICONERROR);
@@ -121,7 +121,7 @@ void CElevatorSimulationDlg::RefreshSimulationView()
 	const auto floors = m_simulation.GetFloorSnapshots();
 	const auto statistics = m_simulation.GetStatisticsSnapshot();
 	CString text;
-	text.Format(L"工程骨架已就绪（尚未运行调度仿真）\r\n"
+	text.Format(L"核心已初始化（尚未开始仿真）\r\n"
 		L"楼层：%zu  电梯：%zu  仿真时间：%.1f 秒\r\n\r\n",
 		floors.size(), elevators.size(), m_simulation.GetCurrentTime());
 	for (const auto& elevator : elevators)
@@ -135,7 +135,7 @@ void CElevatorSimulationDlg::RefreshSimulationView()
 	}
 	CString footer;
 	footer.Format(L"\r\n等待：%zu  乘梯：%zu  已到达：%zu\r\n"
-		L"调度、运动、乘客生成和正式 UI：待后续分工实现。",
+		L"动态视图、参数输入及控制按钮：待 UI 模块完善。",
 		statistics.waitingCount, statistics.ridingCount, statistics.arrivedCount);
 	text += footer;
 	SetDlgItemTextW(IDC_SIMULATION_STATUS, text);

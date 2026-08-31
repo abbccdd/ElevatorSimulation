@@ -253,4 +253,12 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
+  <ItemGroup>
+    <None Include="..\Tests\TestSupport.h" />
+    <None Include="..\Tests\DispatcherTests.cpp" />
+    <None Include="..\Tests\ElevatorTests.cpp" />
+    <None Include="..\Tests\SimulationTests.cpp" />
+    <None Include="..\Tests\RunCoreTests.cmd" />
+    <None Include="..\docs\AlgorithmDesign.md" />
+  </ItemGroup>
 </Project>
