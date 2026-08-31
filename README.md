@@ -88,6 +88,8 @@ Snapshot 按值返回：UI 可以读取或修改自己的副本，但无法通�
 
 调度快照 `ElevatorDispatchSnapshot::StopService` 的 Idle 记录表示内呼/下客，Up/Down 记录表示外呼；新增 `boardingTargetFloors` 为已知等待乘客的 FIFO 目标层前缀，最多需要 capacity 人。Simulation 回填真实人数并跳过正在 Boarding 的队头；纯人数旧快照仍可使用，但不会推测未知下客楼层。`SelectElevator` / `SelectFromSnapshots` 签名保持兼容，Dispatcher 不直接读取 Passenger、Floor 或 Simulation。
 
+新增 `HallCallDispatchSnapshot`（请求及 FIFO 目标副本）、`DispatchScore`（可行性、ETA、Cost、预计人数）与 `DispatchPlan`（归属方案、总成本及搜索计数）。`ScoreSnapshot` 复用同一个评分实现，`SelectReassignment` / `PlanAssignments` 只读决策。Simulation 负责真实提交，Elevator 仅新增安全的 `RemoveHallCall`，不改变原状态机。
+
 ## 编号、初始化与所有权
 
 楼层编号统一为 **1~L**。`m_floors` 按楼层递增存储，存储下标只是 STL 的实现细节；各对象、任务、乘客、调度请求与 Snapshot 中均使用真实楼层编号，不向调用方暴露第二套楼层编号。
@@ -146,7 +148,7 @@ Update 在下一个乘客到达、任意电梯动作完成、当前帧目标时�
 | --- | --- | --- |
 | A | Core/Passenger.*、Core/Floor.* | 已补齐状态转换、FIFO 与 ID 校验；后续可扩展交通输入方式 |
 | B | Core/Elevator.* | 已实现方向保持、顺路停靠、S/T 计时、容量及上下客 |
-| C | Core/Dispatcher.* | 已实现顺路与空闲统一比较 Cost/ETA，反向忙碌增加有限方向成本；LOOK 路线、负载与稳定 tie-break |
+| C | Core/Dispatcher.* | 统一 Cost/ETA 与 LOOK 预演；有限联合分配、滞回改派决策、稳定 tie-break |
 | D | Core/Simulation.* | 已集成种子、Poisson 到达、手工注入、唯一外呼归属、事件推进和清理 |
 | E | ElevatorSimulationDlg.* 与必要资源 | 仍待正式参数输入、开始/暂停/继续/重置、倍速、动态刷新与动画 |
 | F | Statistics/*、Tests/* | 已接入事件统计、回归及压力测试；后续扩展算法对照场景和展示 |
@@ -156,6 +158,10 @@ Dispatcher 无副作用。当前满载梯若预测在请求层接客前释放容
 Dispatcher 的 Aging 保持 `AgingBonus = min(8.0, waitingSeconds × 0.05)`；`AdjustedCost = ETA + LoadCost + max(0, DirectionCost - AgingBonus)`，其中 `LoadCost = T × 请求层完成下客后的 projectedOccupancy / capacity`。顺路与空闲统一比较 Cost，反向忙碌的方向成本为 S+T，按 Cost、ETA、距离、任务数、ID 稳定排序。
 
 ETA 包含当前动作剩余时间、LOOK 路线移动、实际可上下客的逐人 T，以及请求层接客前的下客时间。下客事件消费后清零，Alighting 当前一人只计剩余时间，其余人各计 T；Boarding 预留者的席位与未来下客只计一次。已有等待乘客按 FIFO 和剩余容量预计上梯，其目标层加入局部预演任务，后续下客释放容量。预演不修改真实对象，不预测未来新乘客或未来分配；单次评分不保证全局最优及持续超载下的等待上界。
+
+Hall Call 动态改派只由新乘客、到层、上下客完成和零耗时状态变化触发，不受 UI 帧率驱动。同一仿真时刻最多一轮改派；要求 `CurrentETA - BestETA >= 5 秒`，原梯距请求层不超过 1 层时锁定，改派后冷却 10 仿真秒。原梯已经到达/正在服务该请求时不抢单。所有阈值集中定义于 Dispatcher.h。
+
+未分配请求按队头时间/ID 排序，每批只规划最老 3 个；每个请求最多选 3 台候选梯和“暂不分配”，最多 64 个组合。每插入一个请求就在局部快照增加任务、FIFO 上客及未来下客，再计算后续请求；最终还会重算较早请求被新增任务影响后的 ETA/载荷。先最大化可分配数量，再依总 Cost、最大 ETA、总 ETA、请求顺序中的电梯 ID 比较。候选截断和有限批次不等于全局最优。
 
 统计的等待时间包含上梯 T，以完成上梯者为样本；乘梯时间包含下梯 T，以已到达者为样本。截止仍等待/乘梯者保持活动状态。比较算法时必须同时看送达量与积压，不能只比较已完成样本的均值。
 
@@ -202,17 +208,29 @@ ETA 包含当前动作剩余时间、LOOK 路线移动、实际可上下客的�
 | 验证项 | 结果 |
 | --- | --- |
 | 原 CoreSmokeTests | 406 项检查通过，未删除任何检查 |
-| Dispatcher | 66 个场景、366 项断言通过（含 108 组真实 LOOK 路线对照） |
-| Elevator（含群控联合与最近距离对照） | 22 个场景、62 项断言通过 |
-| Simulation（含随机、压力、所有权） | 34 个场景、1,953 项断言通过 |
-| 新增测试架构 | x64 与 x86 均通过，合计每个架构 122 场景 / 2,381 断言，另有各 406 项 Smoke |
+| Dispatcher | 78 个场景、423 项断言通过（含 108 组真实 LOOK 路线对照） |
+| Elevator（含撤销外呼及内呼保护） | 24 个场景、71 项断言通过 |
+| Simulation（含改派、随机、压力、所有权） | 36 个场景、2,087 项断言通过 |
+| 新增测试架构 | x64 与 x86 均通过，合计每个架构 138 场景 / 2,581 断言，另有各 406 项 Smoke |
 | Debug x64 / Release x64 / Debug x86 / Release x86 全量重新生成 | 全部 0 警告、0 错误 |
 | 2,000 人有限批次 | 足够时长后全部送达，无活动 ID 或外呼遗留 |
-| 高客流：seed=321，λ=8，600 秒 | 生成 4,815，送达 3,381，等待 1,413，乘梯 21，人数守恒 |
-| 一小时：seed=987，λ=0.6 | 生成 2,186，送达 2,174，全部采样一致性检查通过 |
+| 高客流：seed=321，λ=8，600 秒 | 生成 4,815，送达 3,418，等待 1,383，乘梯 14，人数守恒 |
+| 一小时：seed=987，λ=0.6 | 生成 2,186，送达 2,175，全部采样一致性检查通过 |
 | 固定任务对照 | 同向路线实际响应 10 秒，纯最近距离选择需 30 秒；不代表所有客流均优 |
 
-具体配置见 Tests/SimulationTests.cpp。本次 ETA 一致性修复日志位于 `build/verification/dispatcher-look/`，不提交生成文件；主 App、PCH、`.rc`、Resource.h、Dialog、UI 布局及 Statistics 本次均未修改。
+具体配置见 Tests/SimulationTests.cpp。本次验证日志位于 `build/verification/joint-reassignment/`，不提交生成文件；主 App、PCH、`.rc`、Resource.h、Dialog、UI 布局及 Statistics 本次均未修改。
+
+固定归属贪心基线 `0fade61` 与新算法使用相同 S/T、FIFO 注入、seed 和 MSVC `/O2 /MD`；`Tests/RunDispatchComparison.ps1 x64` 自动在 build 内导出旧源码，不切换分支。对照程序是独立测试工具，不加入 MFC 可执行文件。平均等待包含上梯 T：
+
+| 固定场景 | 原贪心固定归属均等候（秒） | 联合分配+动态改派均等候（秒） | 送达旧/新 |
+| --- | ---: | ---: | ---: |
+| 9F↑、11F↓ 两请求 | 13.0000 | 12.0000 | 2 / 2 |
+| 15F↑ 后新增 17F↓ 导致绕行 | 41.0000 | 12.0000 | 2 / 2 |
+| 90 人有限批次 | 13.0889 | 13.1806 | 90 / 90 |
+| 2000 人有限批次 | 306.5200 | 304.2986 | 2000 / 2000 |
+| seed=321 高客流 600 秒 | 60.5609 | 62.2858 | 3381 / 3418 |
+
+高客流等待队列旧/新为 1413/1383，乘梯中为 21/14；两版已上梯样本不同，不能只比较均值。90 人场景略有退化。当前实现增加了计算量：本机 x64 优化编译、每场景 3 次平均，2000 人约 54→356 ms，高客流约 91→4044 ms（不含编译）；不是所有客流都更快或等待更短。完整配置、成本反例、搜索开销及局限见 docs/AlgorithmDesign.md。
 
 ## 使用核心与下一步
 

@@ -63,6 +63,7 @@ private:
         int assignedElevatorId = InvalidElevatorId;
         double firstRequestTime = 0.0;
         PassengerId firstPassengerId = InvalidPassengerId;
+        double lastReassignmentTime = UnsetTime;
     };
     using HallCallKey = std::pair<int, Direction>;
     std::map<HallCallKey, HallCall> m_hallCalls;
@@ -70,9 +71,12 @@ private:
     std::uint32_t m_seed = 0;
     std::mt19937 m_random;
     double m_nextArrivalTime = 0.0;
+    bool m_dispatchDirty = true; // 仅模型事件置脏，帧边界不触发重评估。
+    double m_lastReassessmentTime = UnsetTime;
 
     void GenerateDuePassengers();
     std::vector<ElevatorDispatchSnapshot> BuildDispatchSnapshots() const;
+    HallCallDispatchSnapshot BuildHallCallSnapshot(const HallCallKey& key, const HallCall& call) const;
     bool DispatchCalls();
     void StabilizeCurrentTime();
     void ReleaseHallCall(int floor, Direction direction, int elevatorId);

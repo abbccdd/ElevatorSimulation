@@ -105,6 +105,14 @@ bool Elevator::AddHallCall(int floor, Direction direction)
     return true;
 }
 
+bool Elevator::RemoveHallCall(int floor, Direction direction)
+{
+    if (!HasHallCall(floor, direction) || floor == m_currentFloor) return false;
+    (direction == Direction::Up ? m_upHallCalls : m_downHallCalls).erase(floor);
+    RebuildTasks();
+    return true;
+}
+
 bool Elevator::AddInternalTarget(int floor)
 {
     if (!IsValidFloor(floor) || floor == m_currentFloor) return false;

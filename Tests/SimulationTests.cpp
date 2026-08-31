@@ -317,5 +317,34 @@ int main()
         tests.Check(!floor.RemoveFront(2,Direction::Up) && floor.Peek(Direction::Up)==1,"cannot bypass front");
         tests.Check(floor.RemoveFront(1,Direction::Up) && floor.Peek(Direction::Up)==2,"remove front only");
     });
+    tests.Run("event-driven reassignment updates unique ownership", [&] {
+        auto config=Config(); config.floorCount=20; config.simulationDuration=200;
+        Simulation simulation; simulation.Initialize(config,42);
+        simulation.AddPassenger(15,20); simulation.Start(); simulation.Update(2);
+        tests.Check(simulation.GetHallCallSnapshots()[0].assignedElevatorId==1,"E2 initially wins equal distance");
+        simulation.AddPassenger(17,1); simulation.Update(2);
+        int owner=-1;
+        for(const auto& call:simulation.GetHallCallSnapshots()) if(call.floorNumber==15) owner=call.assignedElevatorId;
+        tests.Check(owner==2,"new down passenger makes E3 much faster for 15F up");
+        tests.Check(simulation.ValidateState(),"old elevator no longer owns reassigned call");
+        for(int frame=0;frame<50;++frame)
+        {
+            simulation.Update(0.1);
+            for(const auto& call:simulation.GetHallCallSnapshots()) if(call.floorNumber==15)
+                tests.Check(call.assignedElevatorId==2,"no ping-pong across frame boundaries");
+            tests.Check(simulation.ValidateState(),"one owner during reassignment cooldown");
+        }
+        simulation.Update(180);
+        tests.Check(simulation.GetStatisticsSnapshot().arrivedCount==2 && simulation.ValidateState(),"both requests complete");
+    });
+    tests.Run("dynamic and joint decisions are independent of frame boundaries", [&] {
+        auto config=Config(); config.floorCount=20; config.simulationDuration=200;
+        Simulation a,b; a.Initialize(config,42); b.Initialize(config,42);
+        a.AddPassenger(15,20); b.AddPassenger(15,20); a.Start(); b.Start(); a.Update(2);
+        for(int frame=0;frame<8;++frame) b.Update(0.25);
+        a.AddPassenger(17,1); b.AddPassenger(17,1); a.Update(10);
+        for(int frame=0;frame<80;++frame) b.Update(0.125);
+        SameState(tests,a,b);
+    });
     return tests.Finish();
 }

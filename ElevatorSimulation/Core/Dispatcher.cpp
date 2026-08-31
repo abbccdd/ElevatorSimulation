@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <limits>
 #include <map>
+#include <numeric>
 #include <set>
 #include <tuple>
 
@@ -158,6 +160,36 @@ namespace
         }
         return result;
     }
+
+    auto CandidateKey(const DispatchScore& score, const ElevatorDispatchSnapshot& snapshot, int floor)
+    {
+        return std::make_tuple(score.cost, score.eta,
+            std::abs(static_cast<double>(floor) - snapshot.elevator.currentFloor),
+            snapshot.upTasks.size() + snapshot.downTasks.size(), snapshot.elevator.id);
+    }
+
+    void AddPlannedHallCall(ElevatorDispatchSnapshot& snapshot, const HallCallDispatchSnapshot& request)
+    {
+        auto& tasks = request.direction == Direction::Up ? snapshot.upTasks : snapshot.downTasks;
+        tasks.push_back(request.floor);
+        std::sort(tasks.begin(), tasks.end());
+        tasks.erase(std::unique(tasks.begin(), tasks.end()), tasks.end());
+        ElevatorDispatchSnapshot::StopService service{ request.floor, request.direction, 0, request.waitingCount };
+        const auto count = (std::min)(request.targetFloors.size(), static_cast<std::size_t>(snapshot.elevator.capacity));
+        service.boardingTargetFloors.assign(request.targetFloors.begin(), request.targetFloors.begin() + count);
+        snapshot.stopServices.push_back(std::move(service));
+        if (snapshot.elevator.state == ElevatorState::Idle)
+        {
+            // 与真实 AddHallCall 一致：第一项任务锁定起步方向；后续组合不能重选方向。
+            const bool atFloor = snapshot.elevator.currentFloor == request.floor;
+            snapshot.elevator.direction = atFloor ? request.direction :
+                GetDirection(snapshot.elevator.currentFloor, request.floor);
+            snapshot.elevator.state = atFloor ? ElevatorState::Stopped :
+                (snapshot.elevator.direction == Direction::Up ? ElevatorState::MovingUp : ElevatorState::MovingDown);
+            snapshot.betweenFloors = !atFloor;
+            snapshot.remainingActionTime = atFloor ? 0.0 : snapshot.moveTimePerFloor;
+        }
+    }
 }
 
 double ElevatorDispatcher::GetAgingBonus(double requestTime, double currentTime) const noexcept
@@ -181,17 +213,30 @@ int ElevatorDispatcher::SelectFromSnapshots(int requestFloor, Direction requestD
     const std::vector<ElevatorDispatchSnapshot>& elevators,
     double requestTime, double currentTime) const
 {
-    if (requestFloor < 1 || !IsTravelDirection(requestDirection))
-        return InvalidElevatorId;
     using Score = std::tuple<double, double, double, std::size_t, int>;
     Score bestScore;
     int selected = InvalidElevatorId;
-    const double agingBonus = GetAgingBonus(requestTime, currentTime);
     for (std::size_t index = 0; index < elevators.size(); ++index)
     {
-        const auto& snapshot = elevators[index];
-        const auto& car = snapshot.elevator;
-        if (car.id < 0 || car.currentFloor < 1 || car.capacity <= 0 || car.passengerCount < 0 ||
+        const auto score = ScoreSnapshot(requestFloor, requestDirection, elevators[index], requestTime, currentTime);
+        if (!score.feasible) continue;
+        const auto key = CandidateKey(score, elevators[index], requestFloor);
+        if (selected == InvalidElevatorId || key < bestScore)
+        {
+            selected = static_cast<int>(index);
+            bestScore = key;
+        }
+    }
+    return selected;
+}
+
+DispatchScore ElevatorDispatcher::ScoreSnapshot(int requestFloor, Direction requestDirection,
+    const ElevatorDispatchSnapshot& snapshot, double requestTime, double currentTime) const
+{
+    DispatchScore score;
+    if (requestFloor < 1 || !IsTravelDirection(requestDirection)) return score;
+    const auto& car = snapshot.elevator;
+    if (car.id < 0 || car.currentFloor < 1 || car.capacity <= 0 || car.passengerCount < 0 ||
             snapshot.reservedBoardingCount < 0 ||
             snapshot.reservedBoardingCount > car.capacity ||
             car.passengerCount > car.capacity - snapshot.reservedBoardingCount ||
@@ -202,49 +247,166 @@ int ElevatorDispatcher::SelectFromSnapshots(int requestFloor, Direction requestD
             !std::isfinite(snapshot.moveTimePerFloor) || snapshot.moveTimePerFloor <= 0.0 ||
             !std::isfinite(snapshot.personTime) || snapshot.personTime <= 0.0 ||
             !std::isfinite(snapshot.remainingActionTime) || snapshot.remainingActionTime < 0.0)
-            continue;
-        if (snapshot.betweenFloors &&
+        return score;
+    if (snapshot.betweenFloors &&
             ((car.direction == Direction::Down && car.currentFloor == 1) ||
                 (car.direction == Direction::Up && (car.currentFloor == (std::numeric_limits<int>::max)() ||
                     (snapshot.floorCount > 0 && car.currentFloor == snapshot.floorCount)))))
-            continue;
-        const auto validTask = [&](int floor)
-        { return floor >= 1 && (snapshot.floorCount == 0 || floor <= snapshot.floorCount); };
-        bool validTasks = true;
-        for (int floor : snapshot.upTasks) validTasks = validTasks && validTask(floor);
-        for (int floor : snapshot.downTasks) validTasks = validTasks && validTask(floor);
-        if (!validTasks) continue;
-        const bool idle = car.state == ElevatorState::Idle;
-        if (!idle && !IsTravelDirection(car.direction))
-            continue;
-        const bool ahead = car.direction == Direction::Up ? requestFloor > car.currentFloor :
-            requestFloor < car.currentFloor;
-        const bool onWay = !idle && car.direction == requestDirection &&
-            (ahead || (!snapshot.betweenFloors && requestFloor == car.currentFloor));
-        const RouteEstimate estimate = EstimatePickupTime(requestFloor, requestDirection, snapshot);
-        if (!estimate.reachedRequest)
-            continue;
-        const double eta = estimate.eta;
-        // 顺路与空闲统一比较成本。非顺路忙碌梯增加 S+T 的有限策略成本，
-        // 实际返程/折返耗时已计入 ETA；该附加项不代表额外物理耗时。
-        const double directionCost = idle || onWay ? 0.0 :
-            snapshot.moveTimePerFloor + snapshot.personTime;
-        // 以请求层完成下客、尚未接本外呼时的预计载荷评分，附加不超过一个 T。
-        const double loadCost = snapshot.personTime *
-            static_cast<double>(estimate.projectedOccupancy) / car.capacity;
-        // AgingBonus 优先抵消非顺路方向成本，使老请求能在有限等待后接受
-        // 合理的折返梯；折扣总额仍受 MaxAgingBonus 限制，不会无条件压过 ETA。
-        const double adjustedCost = eta + loadCost +
-            (std::max)(0.0, directionCost - agingBonus);
-        if (!std::isfinite(adjustedCost))
-            continue;
-        const Score score{ adjustedCost, eta, std::abs(static_cast<double>(requestFloor) - car.currentFloor),
-            snapshot.upTasks.size() + snapshot.downTasks.size(), car.id };
-        if (selected == InvalidElevatorId || score < bestScore)
+        return score;
+    const auto validTask = [&](int floor)
+    { return floor >= 1 && (snapshot.floorCount == 0 || floor <= snapshot.floorCount); };
+    bool validTasks = true;
+    for (int floor : snapshot.upTasks) validTasks = validTasks && validTask(floor);
+    for (int floor : snapshot.downTasks) validTasks = validTasks && validTask(floor);
+    if (!validTasks) return score;
+    const bool idle = car.state == ElevatorState::Idle;
+    if (!idle && !IsTravelDirection(car.direction)) return score;
+    const bool ahead = car.direction == Direction::Up ? requestFloor > car.currentFloor :
+        requestFloor < car.currentFloor;
+    const bool onWay = !idle && car.direction == requestDirection &&
+        (ahead || (!snapshot.betweenFloors && requestFloor == car.currentFloor));
+    const RouteEstimate estimate = EstimatePickupTime(requestFloor, requestDirection, snapshot);
+    if (!estimate.reachedRequest) return score;
+    const double eta = estimate.eta;
+    // 顺路与空闲统一比较成本。非顺路忙碌梯增加 S+T 的有限策略成本，
+    // 实际返程/折返耗时已计入 ETA；该附加项不代表额外物理耗时。
+    const double directionCost = idle || onWay ? 0.0 : snapshot.moveTimePerFloor + snapshot.personTime;
+    // 以请求层完成下客、尚未接本外呼时的预计载荷评分，附加不超过一个 T。
+    const double loadCost = snapshot.personTime * static_cast<double>(estimate.projectedOccupancy) / car.capacity;
+    // Aging 抵消有限方向惩罚，保持已验证的 Cost 口径。
+    score.directionPenalty = (std::max)(0.0, directionCost - GetAgingBonus(requestTime, currentTime));
+    score.cost = eta + loadCost + score.directionPenalty;
+    score.eta = eta;
+    score.projectedOccupancy = estimate.projectedOccupancy;
+    score.feasible = std::isfinite(score.cost);
+    return score;
+}
+
+int ElevatorDispatcher::SelectReassignment(const HallCallDispatchSnapshot& request, int currentElevatorIndex,
+    const std::vector<ElevatorDispatchSnapshot>& elevators, double currentTime, double lastReassignmentTime) const
+{
+    if (currentElevatorIndex < 0 || static_cast<std::size_t>(currentElevatorIndex) >= elevators.size())
+        return InvalidElevatorId;
+    const auto& owner = elevators[static_cast<std::size_t>(currentElevatorIndex)];
+    if (!std::isfinite(currentTime) ||
+        !std::isfinite(lastReassignmentTime) ||
+        (lastReassignmentTime != UnsetTime && currentTime - lastReassignmentTime < ReassignCooldownSeconds) ||
+        std::abs(static_cast<double>(owner.elevator.currentFloor) - request.floor) <= ReassignLockDistanceFloors)
+        return currentElevatorIndex;
+    const auto current = ScoreSnapshot(request.floor, request.direction, owner, request.firstRequestTime, currentTime);
+    using Key = std::tuple<double, double, double, std::size_t, int>;
+    Key bestKey;
+    double bestEta = std::numeric_limits<double>::infinity();
+    int selected = currentElevatorIndex;
+    for (std::size_t index = 0; index < elevators.size(); ++index)
+    {
+        if (index == static_cast<std::size_t>(currentElevatorIndex)) continue;
+        const auto score = ScoreSnapshot(request.floor, request.direction, elevators[index], request.firstRequestTime, currentTime);
+        if (!score.feasible) continue;
+        const auto& snapshot = elevators[index];
+        const Key key{score.eta, score.cost,
+            std::abs(static_cast<double>(snapshot.elevator.currentFloor) - request.floor),
+            snapshot.upTasks.size() + snapshot.downTasks.size(), snapshot.elevator.id};
+        if (selected == currentElevatorIndex || key < bestKey)
         {
             selected = static_cast<int>(index);
-            bestScore = score;
+            bestKey = key;
+            bestEta = score.eta;
         }
     }
-    return selected;
+    return selected != currentElevatorIndex && current.eta - bestEta >= ReassignThresholdSeconds ?
+        selected : currentElevatorIndex;
+}
+
+DispatchPlan ElevatorDispatcher::PlanAssignments(const std::vector<HallCallDispatchSnapshot>& requests,
+    const std::vector<ElevatorDispatchSnapshot>& elevators, double currentTime) const
+{
+    DispatchPlan result;
+    result.elevatorIndices.assign(requests.size(), InvalidElevatorId);
+    if (!std::isfinite(currentTime)) return result;
+    std::vector<std::size_t> order(requests.size());
+    std::iota(order.begin(), order.end(), std::size_t{0});
+    std::stable_sort(order.begin(), order.end(), [&](std::size_t left, std::size_t right)
+    {
+        const auto& a=requests[left]; const auto& b=requests[right];
+        const double ta=std::isfinite(a.firstRequestTime) ? a.firstRequestTime : std::numeric_limits<double>::infinity();
+        const double tb=std::isfinite(b.firstRequestTime) ? b.firstRequestTime : std::numeric_limits<double>::infinity();
+        return std::make_tuple(ta,a.firstPassengerId,a.floor,a.direction) <
+            std::make_tuple(tb,b.firstPassengerId,b.floor,b.direction);
+    });
+    if (order.size() > MaxJointRequests) order.resize(MaxJointRequests);
+    if (order.empty()) return result;
+    auto local = elevators;
+    std::vector<int> chosen(order.size(), InvalidElevatorId);
+    std::vector<double> directionPenalties(order.size());
+    using PlanKey = std::tuple<int, double, double, double, std::vector<int>>;
+    PlanKey bestKey;
+    bool foundPlan = false;
+    std::function<void(std::size_t)> search = [&](std::size_t depth)
+    {
+        if (depth == order.size())
+        {
+            ++result.evaluatedCombinations;
+            int assigned=0;
+            double cost=0.0, maxEta=0.0, totalEta=0.0;
+            std::vector<int> ids(order.size(), (std::numeric_limits<int>::max)());
+            for (std::size_t i=0;i<order.size();++i)
+            {
+                if (chosen[i] == InvalidElevatorId) continue;
+                const auto& request=requests[order[i]];
+                const auto& car=local[static_cast<std::size_t>(chosen[i])];
+                ++result.scoreEvaluations;
+                const auto score=ScoreSnapshot(request.floor,request.direction,car,request.firstRequestTime,currentTime);
+                if (!score.feasible) return;
+                ++assigned;
+                // 最终组合会改变先前请求的路线：重新计算所有 ETA/载荷。
+                // 方向惩罚沿用插入该请求之前的上下文，避免空闲梯被事后重复惩罚。
+                cost += score.eta + car.personTime * score.projectedOccupancy / car.elevator.capacity + directionPenalties[i];
+                maxEta=(std::max)(maxEta,score.eta); totalEta+=score.eta;
+                ids[i]=car.elevator.id;
+            }
+            if (!std::isfinite(cost)) return;
+            // 先寻找可服务数量最多的方案，避免“全不分配=零成本”赢得搜索。
+            const PlanKey key{-assigned,cost,maxEta,totalEta,ids};
+            if (!foundPlan || key < bestKey)
+            {
+                foundPlan=true; bestKey=key;
+                result.assignedCount=static_cast<std::size_t>(assigned);
+                result.totalCost=cost; result.maxEta=maxEta; result.totalEta=totalEta;
+                for (std::size_t i=0;i<order.size();++i) result.elevatorIndices[order[i]]=chosen[i];
+            }
+            return;
+        }
+        const auto& request=requests[order[depth]];
+        bool valid = request.waitingCount > 0 && std::isfinite(request.firstRequestTime) &&
+            request.targetFloors.size() <= static_cast<std::size_t>(request.waitingCount);
+        for (int target:request.targetFloors)
+            valid = valid && target >= 1 && GetDirection(request.floor,target)==request.direction;
+        std::vector<std::pair<int,DispatchScore>> candidates;
+        if (valid)
+            for (std::size_t index=0;index<local.size();++index)
+            {
+                ++result.scoreEvaluations;
+                const auto score=ScoreSnapshot(request.floor,request.direction,local[index],request.firstRequestTime,currentTime);
+                if (score.feasible) candidates.emplace_back(static_cast<int>(index),score);
+            }
+        std::stable_sort(candidates.begin(),candidates.end(),[&](const auto& a,const auto& b)
+        { return CandidateKey(a.second,local[static_cast<std::size_t>(a.first)],request.floor) <
+            CandidateKey(b.second,local[static_cast<std::size_t>(b.first)],request.floor); });
+        if (candidates.size() > MaxJointCandidates) candidates.resize(MaxJointCandidates);
+        for (const auto& candidate:candidates)
+        {
+            auto& car=local[static_cast<std::size_t>(candidate.first)];
+            auto before=car;
+            chosen[depth]=candidate.first;
+            directionPenalties[depth]=candidate.second.directionPenalty;
+            AddPlannedHallCall(car,request);
+            search(depth+1);
+            car=std::move(before);
+        }
+        chosen[depth]=InvalidElevatorId;
+        search(depth+1);
+    };
+    search(0);
+    return result;
 }

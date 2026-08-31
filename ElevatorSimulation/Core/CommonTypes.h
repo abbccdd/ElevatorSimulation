@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 // 唯一公共契约：核心、统计和 UI 必须共用这些定义。
@@ -111,6 +112,38 @@ struct ElevatorDispatchSnapshot
     };
     // Simulation 补充已分配外呼的真实队列与目标层；Dispatcher 只消费局部副本。
     std::vector<StopService> stopServices;
+};
+
+// 调度专用请求副本；不拥有乘客，只包含 FIFO 目标楼层数值。
+struct HallCallDispatchSnapshot
+{
+    int floor = 1;
+    Direction direction = Direction::Idle;
+    double firstRequestTime = 0.0;
+    PassengerId firstPassengerId = InvalidPassengerId;
+    int waitingCount = 0;
+    std::vector<int> targetFloors;
+};
+
+struct DispatchScore
+{
+    bool feasible = false;
+    double cost = std::numeric_limits<double>::infinity();
+    double eta = std::numeric_limits<double>::infinity();
+    double directionPenalty = 0.0; // 已扣除有上限的 Aging 折扣。
+    int projectedOccupancy = 0;
+};
+
+struct DispatchPlan
+{
+    // 与传入请求顺序一致，值为电梯容器下标；-1 表示本批未分配。
+    std::vector<int> elevatorIndices;
+    std::size_t assignedCount = 0;
+    double totalCost = 0.0;
+    double maxEta = 0.0;
+    double totalEta = 0.0;
+    std::size_t evaluatedCombinations = 0;
+    std::size_t scoreEvaluations = 0;
 };
 
 // 单梯返回事件，Simulation 负责用统一时钟登记 Passenger 和 Statistics。

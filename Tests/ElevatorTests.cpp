@@ -178,5 +178,27 @@ int main()
         tests.Near(chosen,10,"chosen actual response seconds"); tests.Near(nearest,30,"nearest actual response seconds");
         std::cout << "Controlled pickup comparison: directional=" << chosen << "s, pure nearest=" << nearest << "s\n";
     });
+    tests.Run("remove hall call preserves internal targets and running action", [&] {
+        Elevator car(0,1,Config()); car.AddInternalTarget(10);
+        car.AddHallCall(10,Direction::Up); car.AddHallCall(10,Direction::Down); car.Advance(0.5);
+        const auto before=car.GetDispatchSnapshot();
+        tests.Check(car.RemoveHallCall(10,Direction::Up),"remove exact direction");
+        tests.Check(!car.HasHallCall(10,Direction::Up) && car.HasHallCall(10,Direction::Down) &&
+            car.GetUpTasks().count(10)==1,"keep internal call and opposite hall");
+        const auto after=car.GetDispatchSnapshot();
+        tests.Check(before.elevator.state==after.elevator.state && before.elevator.direction==after.elevator.direction,
+            "no midflight state change");
+        tests.Near(after.remainingActionTime,before.remainingActionTime,"no reset of current leg");
+        tests.Check(!car.RemoveHallCall(10,Direction::Up),"already absent");
+    });
+    tests.Run("cannot remove current landing service", [&] {
+        Elevator car(0,5,Config()); car.AddHallCall(5,Direction::Up);
+        tests.Check(!car.RemoveHallCall(5,Direction::Up),"at landing protected");
+        car.BeginBoarding(0,8); car.AddHallCall(8,Direction::Up);
+        tests.Check(!car.RemoveHallCall(5,Direction::Up),"boarding protected");
+        tests.Check(car.RemoveHallCall(8,Direction::Up),"future hall can be removed during transfer");
+        car.Advance(3); tests.Check(car.GetUpTasks().count(8)==1 && car.GetPassengerIds().size()==1,
+            "pending passenger destination remains");
+    });
     return tests.Finish();
 }

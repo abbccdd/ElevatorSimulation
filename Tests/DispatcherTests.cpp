@@ -32,6 +32,16 @@ namespace
             "route beats idle just above expected cost");
     }
 
+    HallCallDispatchSnapshot Call(int floor, Direction direction, std::vector<int> targets,
+        PassengerId id = 0, double time = 0.0)
+    {
+        HallCallDispatchSnapshot request;
+        request.floor=floor; request.direction=direction;
+        request.firstPassengerId=id; request.firstRequestTime=time;
+        request.waitingCount=static_cast<int>(targets.size()); request.targetFloors=std::move(targets);
+        return request;
+    }
+
     Elevator AlightingCar(int count)
     {
         SimulationConfig config;
@@ -420,6 +430,113 @@ int main()
         a=Car(0,5,Direction::Up,{0}); tests.Check(select(10,Direction::Up,{a})==-1,"bad task floor");
         a=Car(0,(std::numeric_limits<int>::max)(),Direction::Up); a.floorCount=0; a.betweenFloors=true;
         tests.Check(select(10,Direction::Up,{a})==-1,"no integer overflow at unknown upper bound");
+    });
+    tests.Run("reassign only for a material ETA improvement", [&] {
+        const auto request=Call(10,Direction::Up,{15});
+        const auto owner=Car(0,1,Direction::Up,{10});
+        tests.Check(dispatcher.SelectReassignment(request,0,{owner,Car(1,6)},20)==1,"18s to 8s qualifies");
+        tests.Check(dispatcher.SelectReassignment(request,0,{owner,Car(1,3)},20)==0,"4s gain below 5s threshold");
+        auto boundary=Car(1,6); boundary.moveTimePerFloor=3.25;
+        tests.Check(dispatcher.SelectReassignment(request,0,{owner,boundary},20)==1,"exactly 5s gain qualifies");
+    });
+    tests.Run("near and serving owners are protected", [&] {
+        const auto request=Call(10,Direction::Up,{15});
+        auto owner=Car(0,9,Direction::Up,{10}); owner.remainingActionTime=50;
+        tests.Check(dispatcher.SelectReassignment(request,0,{owner,Car(1,10)},20)==0,"one floor proximity lock");
+        owner.elevator.currentFloor=10; owner.elevator.state=ElevatorState::Boarding;
+        owner.reservedBoardingCount=1;
+        tests.Check(dispatcher.SelectReassignment(request,0,{owner,Car(1,10)},20)==0,"boarding at request locked");
+        owner.elevator.state=ElevatorState::Alighting;
+        tests.Check(dispatcher.SelectReassignment(request,0,{owner,Car(1,10)},20)==0,"alighting at request locked");
+    });
+    tests.Run("reassignment cooldown prevents oscillation", [&] {
+        const auto request=Call(10,Direction::Up,{15});
+        const std::vector<ElevatorDispatchSnapshot> cars{Car(0,1),Car(1,6)};
+        int owner=dispatcher.SelectReassignment(request,0,cars,20);
+        tests.Check(owner==1,"initial reassignment");
+        for(int repeat=0;repeat<20;++repeat)
+            tests.Check(dispatcher.SelectReassignment(request,owner,cars,20,20)==owner,"stable same timestamp");
+        const std::vector<ElevatorDispatchSnapshot> changed{Car(0,10),Car(1,6)};
+        tests.Check(dispatcher.SelectReassignment(request,1,changed,29.9,20)==1,"10 second cooldown");
+        tests.Check(dispatcher.SelectReassignment(request,1,changed,30,20)==0,"cooldown expires at physical event");
+    });
+    tests.Run("joint assignment beats a fixed greedy counterexample", [&] {
+        const std::vector<ElevatorDispatchSnapshot> cars{Car(0,5),Car(1,1)};
+        const std::vector<HallCallDispatchSnapshot> requests{
+            Call(4,Direction::Up,{20},0),Call(6,Direction::Up,{20},1)};
+        const auto first=dispatcher.SelectFromSnapshots(4,Direction::Up,cars);
+        SimulationConfig config; config.capacity=10;
+        Elevator greedyFirst(0,5,config); greedyFirst.AddHallCall(4,Direction::Up);
+        auto accepted=greedyFirst.GetDispatchSnapshot();
+        for(auto& stop:accepted.stopServices) if(stop.direction==Direction::Up) stop.boardingTargetFloors={20};
+        const auto second=dispatcher.SelectFromSnapshots(6,Direction::Up,{accepted,cars[1]});
+        tests.Check(first==0 && second==1,"greedy E1 then E2");
+        const double greedy=dispatcher.ScoreSnapshot(4,Direction::Up,cars[0]).cost+
+            dispatcher.ScoreSnapshot(6,Direction::Up,cars[1]).cost;
+        const auto plan=dispatcher.PlanAssignments(requests,cars,0);
+        tests.Check(plan.elevatorIndices==std::vector<int>({1,0}),"joint E2 then E1");
+        tests.Near(greedy,12,"greedy total cost"); tests.Near(plan.totalCost,8,"joint total cost");
+        std::cout << "Two-call cost: greedy=" << greedy << ", joint=" << plan.totalCost << '\n';
+    });
+    tests.Run("three request search is bounded and deterministic", [&] {
+        const std::vector<ElevatorDispatchSnapshot> cars{Car(0,2),Car(1,6),Car(2,10)};
+        const std::vector<HallCallDispatchSnapshot> calls{
+            Call(2,Direction::Up,{3},0),Call(6,Direction::Up,{7},1),Call(10,Direction::Down,{9},2)};
+        const auto plan=dispatcher.PlanAssignments(calls,cars,0);
+        tests.Check(plan.elevatorIndices==std::vector<int>({0,1,2}) && plan.assignedCount==3,"three immediate pickups");
+        tests.Near(plan.totalCost,0,"no travel or earlier service");
+        tests.Check(plan.evaluatedCombinations<=ElevatorDispatcher::MaxJointCombinations &&
+            plan.scoreEvaluations<=21*cars.size()+192,"bounded branching and scoring");
+        for(int repeat=0;repeat<5;++repeat)
+            tests.Check(dispatcher.PlanAssignments(calls,cars,0).elevatorIndices==plan.elevatorIndices,"stable tie breaks");
+        tests.Check(cars[0].upTasks.empty() && cars[0].elevator.state==ElevatorState::Idle &&
+            calls[0].targetFloors==std::vector<int>({3}),"search only changes local copies");
+    });
+    tests.Run("joint search selects oldest three even if input unsorted", [&] {
+        const auto plan=dispatcher.PlanAssignments({Call(2,Direction::Up,{3},0,30),Call(4,Direction::Up,{5},1,0),
+            Call(6,Direction::Up,{7},2,10),Call(8,Direction::Up,{9},3,20)},
+            {Car(0,2),Car(1,4),Car(2,6),Car(3,8)},40);
+        tests.Check(plan.assignedCount==3 && plan.elevatorIndices[0]==InvalidElevatorId,"fourth newest waits");
+        tests.Check(plan.evaluatedCombinations<=64,"large input does not grow batch");
+    });
+    tests.Run("joint requests may share a car with future capacity", [&] {
+        const auto plan=dispatcher.PlanAssignments({Call(2,Direction::Up,{3},0),Call(4,Direction::Up,{5},1),
+            Call(6,Direction::Up,{7},2)}, {Car(0,1,Direction::Idle,{}, {},0,1)},0);
+        tests.Check(plan.elevatorIndices==std::vector<int>({0,0,0}),"all three fit along one route");
+        tests.Near(plan.totalEta,36,"ETA 2 + 12 + 22 includes prior boarding and drops");
+        tests.Near(plan.maxEta,22,"latest pickup");
+    });
+    tests.Run("final joint route reevaluates earlier request costs", [&] {
+        const auto plan=dispatcher.PlanAssignments({Call(6,Direction::Up,{7},0),Call(2,Direction::Up,{3},1)},
+            {Car(0,1,Direction::Idle,{}, {},0,1)},0);
+        tests.Check(plan.assignedCount==2,"same car route feasible");
+        tests.Near(plan.totalCost,18,"older 6F ETA becomes 16 after adding 2F service; not 10+2");
+    });
+    tests.Run("insufficient capacity leaves partial plan", [&] {
+        const auto plan=dispatcher.PlanAssignments({Call(4,Direction::Up,{8},0),Call(5,Direction::Up,{9},1)},
+            {Car(0,1,Direction::Idle,{}, {},0,1),Car(1,2,Direction::Up,{20},{},1,1)},0);
+        tests.Check(plan.assignedCount==1 && plan.elevatorIndices==std::vector<int>({0,-1}),"cannot fill same seat twice");
+        const auto empty=dispatcher.PlanAssignments({Call(4,Direction::Up,{8})},{Car(0,1,Direction::Up,{20},{},1,1)},0);
+        tests.Check(empty.assignedCount==0 && empty.elevatorIndices[0]==-1,"all infeasible stays pending");
+    });
+    tests.Run("aging remains active in joint cost", [&] {
+        const std::vector<ElevatorDispatchSnapshot> cars{Car(0,11,Direction::Down,{}, {10}),Car(1,6)};
+        const std::vector<HallCallDispatchSnapshot> calls{Call(10,Direction::Up,{15})};
+        tests.Check(dispatcher.PlanAssignments(calls,cars,0).elevatorIndices[0]==1,"fresh prefers idle");
+        tests.Check(dispatcher.PlanAssignments(calls,cars,200).elevatorIndices[0]==0,"aging admits reverse route");
+    });
+    tests.Run("large fleet still respects joint search bound", [&] {
+        std::vector<ElevatorDispatchSnapshot> cars;
+        for(int id=0;id<60;++id) cars.push_back(Car(id,id%18+1));
+        const auto plan=dispatcher.PlanAssignments({Call(4,Direction::Up,{8},0),Call(9,Direction::Down,{2},1),
+            Call(15,Direction::Up,{19},2)},cars,0);
+        tests.Check(plan.assignedCount==3 && plan.evaluatedCombinations<=64,"60 cars do not cause 60 cubed search");
+        tests.Check(plan.scoreEvaluations<=21*cars.size()+192,"candidate scan is linear in fleet size");
+    });
+    tests.Run("joint ties use IDs rather than input order", [&] {
+        const std::vector<HallCallDispatchSnapshot> calls{Call(5,Direction::Up,{20})};
+        tests.Check(dispatcher.PlanAssignments(calls,{Car(9,1),Car(2,1)},0).elevatorIndices[0]==1,"lower ID selected");
+        tests.Check(dispatcher.PlanAssignments(calls,{Car(2,1),Car(9,1)},0).elevatorIndices[0]==0,"stable after permutation");
     });
     return tests.Finish();
 }

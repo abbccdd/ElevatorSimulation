@@ -3,6 +3,7 @@
 #include <cmath>
 #include <new>
 #include <stdexcept>
+#include <type_traits>
 #include <utility>
 #include <algorithm>
 #include <limits>
@@ -102,6 +103,8 @@ bool Simulation::Initialize(const SimulationConfig& config, std::uint32_t seed)
         m_dispatcher = ElevatorDispatcher{};
         m_config = config;
         m_currentTime = 0.0;
+        m_dispatchDirty = true;
+        m_lastReassessmentTime = UnsetTime;
         m_state = SimulationState::Ready;
         m_lastError.clear();
         return true;
@@ -204,6 +207,7 @@ PassengerId Simulation::AddPassenger(int startFloor, int targetFloor)
     m_hallCalls.try_emplace({ startFloor, direction }, HallCall{ InvalidElevatorId, m_currentTime, id });
     ++m_nextPassengerId;
     m_statistics.PassengerCreated();
+    m_dispatchDirty = true;
     return id;
 }
 
@@ -222,6 +226,38 @@ void Simulation::GenerateDuePassengers()
 
 bool Simulation::DispatchCalls()
 {
+    if (!m_dispatchDirty) return false;
+    m_dispatchDirty = false;
+    bool changed = false;
+    // 同一物理时刻仅有一轮改派，零耗时状态收敛过程中不反复抢单。
+    if (m_lastReassessmentTime != m_currentTime)
+    {
+        m_lastReassessmentTime = m_currentTime;
+        auto snapshots = BuildDispatchSnapshots();
+        for (auto& [key, call] : m_hallCalls)
+        {
+            const int oldId = call.assignedElevatorId;
+            if (oldId == InvalidElevatorId) continue;
+            const auto request = BuildHallCallSnapshot(key, call);
+            const int newId = m_dispatcher.SelectReassignment(request, oldId, snapshots,
+                m_currentTime, call.lastReassignmentTime);
+            if (newId == oldId || newId == InvalidElevatorId) continue;
+            // 只为已选定改派准备提交，不用于试组合；分配失败不留下半次改派。
+            auto oldOwner = m_elevators[static_cast<std::size_t>(oldId)];
+            auto newOwner = m_elevators[static_cast<std::size_t>(newId)];
+            static_assert(std::is_nothrow_move_assignable<Elevator>::value, "Reassignment commit must not throw");
+            if (!oldOwner.RemoveHallCall(key.first, key.second))
+                throw std::logic_error("Cannot remove reassigned hall call");
+            if (!newOwner.AddHallCall(key.first, key.second))
+                throw std::logic_error("Cannot accept reassigned hall call");
+            m_elevators[static_cast<std::size_t>(oldId)] = std::move(oldOwner);
+            m_elevators[static_cast<std::size_t>(newId)] = std::move(newOwner);
+            call.assignedElevatorId = newId;
+            call.lastReassignmentTime = m_currentTime;
+            changed = true;
+            snapshots = BuildDispatchSnapshots();
+        }
+    }
     std::vector<std::map<HallCallKey, HallCall>::iterator> pending;
     for (auto call = m_hallCalls.begin(); call != m_hallCalls.end(); ++call)
         if (call->second.assignedElevatorId == InvalidElevatorId) pending.push_back(call);
@@ -230,14 +266,17 @@ bool Simulation::DispatchCalls()
         return std::tie(left->second.firstRequestTime, left->second.firstPassengerId, left->first) <
             std::tie(right->second.firstRequestTime, right->second.firstPassengerId, right->first);
     });
-    bool changed = false;
-    for (auto call : pending)
+    if (pending.size() > ElevatorDispatcher::MaxJointRequests)
+        pending.resize(ElevatorDispatcher::MaxJointRequests);
+    if (pending.empty()) return changed;
+    std::vector<HallCallDispatchSnapshot> requests;
+    for (auto call : pending) requests.push_back(BuildHallCallSnapshot(call->first, call->second));
+    const auto plan = m_dispatcher.PlanAssignments(requests, BuildDispatchSnapshots(), m_currentTime);
+    for (std::size_t index = 0; index < pending.size(); ++index)
     {
-        // 每次成功分配后重新组装，后续外呼能看到最新任务与真实队列人数。
-        const auto snapshots = BuildDispatchSnapshots();
+        const auto call = pending[index];
         const auto [floor, direction] = call->first;
-        const int id = m_dispatcher.SelectFromSnapshots(floor, direction, snapshots,
-            call->second.firstRequestTime, m_currentTime);
+        const int id = plan.elevatorIndices[index];
         if (id != InvalidElevatorId)
         {
             if (!m_elevators[static_cast<std::size_t>(id)].AddHallCall(floor, direction))
@@ -247,6 +286,21 @@ bool Simulation::DispatchCalls()
         }
     }
     return changed;
+}
+
+HallCallDispatchSnapshot Simulation::BuildHallCallSnapshot(const HallCallKey& key, const HallCall& call) const
+{
+    HallCallDispatchSnapshot request;
+    request.floor = key.first; request.direction = key.second;
+    request.firstRequestTime = call.firstRequestTime;
+    request.firstPassengerId = call.firstPassengerId;
+    const auto& queue = m_floors[static_cast<std::size_t>(key.first - 1)].GetWaitingIds(key.second);
+    request.waitingCount = static_cast<int>((std::min)(queue.size(),
+        static_cast<std::size_t>((std::numeric_limits<int>::max)())));
+    const auto count = (std::min)(queue.size(), static_cast<std::size_t>(m_config.capacity));
+    for (std::size_t index = 0; index < count; ++index)
+        request.targetFloors.push_back(m_passengers.at(queue[index]).GetTargetFloor());
+    return request;
 }
 
 std::vector<ElevatorDispatchSnapshot> Simulation::BuildDispatchSnapshots() const
@@ -291,6 +345,7 @@ void Simulation::ReleaseHallCall(int floor, Direction direction, int elevatorId)
 {
     const auto call = m_hallCalls.find({ floor, direction });
     if (call == m_hallCalls.end() || call->second.assignedElevatorId != elevatorId) return;
+    m_dispatchDirty = true;
     const PassengerId next = m_floors[static_cast<std::size_t>(floor - 1)].Peek(direction);
     if (next == InvalidPassengerId)
         m_hallCalls.erase(call);
@@ -316,6 +371,7 @@ void Simulation::StabilizeCurrentTime()
             if (alighting != InvalidPassengerId)
             {
                 if (!elevator.BeginAlighting(alighting)) throw std::logic_error("Cannot alight due passenger");
+                m_dispatchDirty = true;
                 changed = true;
                 continue;
             }
@@ -333,6 +389,7 @@ void Simulation::StabilizeCurrentTime()
                 ReleaseHallCall(snapshot.currentFloor, snapshot.direction, snapshot.id);
             }
             changed = true;
+            m_dispatchDirty = true;
         }
         if (!changed) return;
     }
@@ -342,6 +399,7 @@ void Simulation::StabilizeCurrentTime()
 void Simulation::HandleElevatorEvent(int elevatorId, const ElevatorEvent& event)
 {
     if (event.type == ElevatorEventType::None) return;
+    m_dispatchDirty = true;
     if (event.type == ElevatorEventType::FloorReached)
     {
         m_statistics.ElevatorMoved(elevatorId, event.emptyMovement);
