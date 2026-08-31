@@ -17,6 +17,61 @@ namespace
         for (int stop : car.downTasks) car.stopServices.push_back({ stop, Direction::Down, 0, 1 });
         return car;
     }
+
+    // 用两台略快/略慢的空闲梯夹住预期成本，检查 ETA 数值而非只看大致排序。
+    void CheckCost(TestSuite& tests, const ElevatorDispatchSnapshot& route,
+        int floor, Direction direction, double expectedCost)
+    {
+        const ElevatorDispatcher dispatcher;
+        auto idle = Car(99, floor == 1 ? 2 : floor - 1);
+        idle.moveTimePerFloor = expectedCost - 0.01;
+        tests.Check(dispatcher.SelectFromSnapshots(floor, direction, {route, idle}) == 1,
+            "idle just below expected cost wins");
+        idle.moveTimePerFloor = expectedCost + 0.01;
+        tests.Check(dispatcher.SelectFromSnapshots(floor, direction, {route, idle}) == 0,
+            "route beats idle just above expected cost");
+    }
+
+    Elevator AlightingCar(int count)
+    {
+        SimulationConfig config;
+        Elevator car(0, 1, config);
+        car.AddHallCall(1, Direction::Up);
+        for (int id = 0; id < count; ++id)
+        {
+            if (!car.BeginBoarding(id, 5)) throw std::runtime_error("boarding fixture failed");
+            car.Advance(config.personTime);
+        }
+        car.FinishStop();
+        while (!car.IsAtStop()) car.Advance(car.GetTimeToNextEvent());
+        if (!car.BeginAlighting(0)) throw std::runtime_error("alighting fixture failed");
+        car.Advance(2.0); // 当前一人还剩 1 秒，其他人各需完整 T=3 秒。
+        return car;
+    }
+
+    double RealPickupTime(Elevator car, int floor, Direction direction)
+    {
+        car.AddHallCall(floor, direction);
+        double elapsed = 0.0;
+        for (int event = 0; event < 1000; ++event)
+        {
+            if (car.IsAtStop())
+            {
+                const auto alighting = car.GetNextAlightingPassenger();
+                if (alighting != InvalidPassengerId) car.BeginAlighting(alighting);
+                else if (car.GetSnapshot().currentFloor == floor && car.GetSnapshot().direction == direction)
+                    return elapsed;
+                else car.FinishStop();
+            }
+            else
+            {
+                if (car.GetSnapshot().state == ElevatorState::Idle)
+                    throw std::runtime_error("reference elevator lost request");
+                elapsed += car.Advance(car.GetTimeToNextEvent()).elapsedTime;
+            }
+        }
+        throw std::runtime_error("reference route did not finish");
+    }
 }
 
 int main()
@@ -67,19 +122,21 @@ int main()
         tests.Check(select(10,Direction::Up,{boarding,Car(1,7)})==1,"remaining action belongs in pickup ETA");
     });
     tests.Run("multiple passenger events beat fixed stop estimate", [&] {
-        auto route=Car(0,5,Direction::Up,{7,8,15});
+        auto route=Car(0,5,Direction::Up,{7,8,15},{},2);
         route.stopServices.clear();
         route.stopServices.push_back({7,Direction::Idle,2,0});
         route.stopServices.push_back({8,Direction::Up,0,3});
         // Route ETA = 10 seconds movement + 15 seconds for five known transfers;
         // the idle car reaches the request in 18 seconds.
         tests.Check(select(10,Direction::Up,{route,Car(1,1)})==1,"all known passenger transfers count");
+        CheckCost(tests,route,10,Direction::Up,25.9);
     });
     tests.Run("known alighting count affects ETA", [&] {
-        auto route=Car(0,5,Direction::Up,{7,15});
+        auto route=Car(0,5,Direction::Up,{7,15},{},3);
         route.stopServices.clear();
         route.stopServices.push_back({7,Direction::Idle,3,0});
         tests.Check(select(10,Direction::Up,{route,Car(1,1)})==1,"known alighting passengers add T each");
+        CheckCost(tests,route,10,Direction::Up,19);
     });
     tests.Run("full car can free a seat before request", [&] {
         auto full=Car(0,1,Direction::Up,{5}, {}, 2, 2);
@@ -99,10 +156,11 @@ int main()
         route.stopServices.clear();
         route.stopServices.push_back({7,Direction::Up,0,5});
         route.stopServices.push_back({10,Direction::Idle,1,0});
-        // Capped ETA is 16s; charging all five would be 25s and lose to
-        // the 20.7s idle alternative.
-        auto distant=Car(1,1); distant.moveTimePerFloor=2.3;
+        // 移动 10 秒、只上 2 人 6 秒、请求层先下 1 人 3 秒；预计载荷 9/10。
+        // 成本 21.7 秒，优于空闲梯的 22.5 秒；若错误计 5 人上梯就会落败。
+        auto distant=Car(1,1); distant.moveTimePerFloor=2.5;
         tests.Check(select(10,Direction::Up,{route,distant})==0,"boarding is capped by projected capacity");
+        CheckCost(tests,route,10,Direction::Up,21.7);
     });
     tests.Run("waiting count changes intermediate ETA", [&] {
         auto one=Car(0,5,Direction::Up,{7,10});
@@ -145,6 +203,126 @@ int main()
         first.stopServices.push_back({5,Direction::Idle,0,0});
         second.stopServices.push_back({2,Direction::Idle,0,0});
         tests.Check(select(10,Direction::Up,{first,second})==InvalidElevatorId,"no projected seat");
+    });
+    tests.Run("opposite hall ahead fixes LOOK turnaround", [&] {
+        SimulationConfig config;
+        Elevator real(0,5,config); real.AddHallCall(8,Direction::Down);
+        auto route=real.GetDispatchSnapshot();
+        for(auto& stop:route.stopServices) stop.boardingCount=0;
+        // 真梯必须 5->8->3；空反向外呼不计传送时间，16 秒路程 + 5 秒方向成本。
+        tests.Near(RealPickupTime(real,3,Direction::Up),16,"real LOOK visits opposite call ahead");
+        CheckCost(tests,route,3,Direction::Up,21);
+    });
+    tests.Run("alighting is consumed once across both hall directions", [&] {
+        auto route=Car(0,3,Direction::Up,{5},{5,8},1,2);
+        route.stopServices={{5,Direction::Idle,1,0},{5,Direction::Down,0,0},
+            {8,Direction::Down,0,2,{2,2}}};
+        tests.Check(select(4,Direction::Down,{route})==InvalidElevatorId,
+            "5F alighting cannot free seats again after boarding at 8F");
+        route.stopServices.back().boardingCount=1;
+        route.stopServices.back().boardingTargetFloors={2};
+        // 移动 18 秒，下客/上客各 3 秒；到请求层 1/2 载荷 + 方向成本。
+        CheckCost(tests,route,4,Direction::Down,30.5);
+    });
+    tests.Run("in-progress alighting uses remaining time only", [&] {
+        const auto real=AlightingCar(1);
+        tests.Near(RealPickupTime(real,6,Direction::Up),3,"1 remaining + 2 travel");
+        CheckCost(tests,real.GetDispatchSnapshot(),6,Direction::Up,3);
+    });
+    tests.Run("remaining alighting passengers all count", [&] {
+        const auto real=AlightingCar(3);
+        tests.Near(RealPickupTime(real,6,Direction::Up),9,"1 remaining + 2 full transfers + travel");
+        CheckCost(tests,real.GetDispatchSnapshot(),6,Direction::Up,9);
+        CheckCost(tests,real.GetDispatchSnapshot(),5,Direction::Up,7);
+    });
+    tests.Run("boarding snapshot does not duplicate reserved queue head", [&] {
+        SimulationConfig config; config.capacity=2;
+        Elevator real(0,5,config); real.AddHallCall(5,Direction::Up);
+        real.BeginBoarding(1,9); real.Advance(2);
+        tests.Near(RealPickupTime(real,6,Direction::Up),3,"only reserved passenger remaining second");
+        CheckCost(tests,real.GetDispatchSnapshot(),6,Direction::Up,4.5);
+    });
+    tests.Run("known boarding destinations release future capacity", [&] {
+        auto route=Car(0,3,Direction::Up,{4}); route.elevator.capacity=2;
+        route.stopServices={{4,Direction::Up,0,2,{6,6}}};
+        // 3->8 为 10 秒，两人上/下共 12 秒，到 8F 空载。
+        CheckCost(tests,route,8,Direction::Up,22);
+        route.stopServices[0].boardingTargetFloors.clear();
+        tests.Check(select(8,Direction::Up,{route})==InvalidElevatorId,
+            "unknown destinations cannot invent released capacity");
+    });
+    tests.Run("FIFO destinations determine who can board", [&] {
+        auto route=Car(0,3,Direction::Up,{4}); route.elevator.capacity=1;
+        route.stopServices={{4,Direction::Up,0,2,{6,12}}};
+        CheckCost(tests,route,8,Direction::Up,16);
+        route.stopServices[0].boardingTargetFloors={12,6};
+        tests.Check(select(8,Direction::Up,{route})==InvalidElevatorId,
+            "cannot skip far-destination queue head for second passenger");
+    });
+    tests.Run("downward FIFO releases capacity at destinations", [&] {
+        auto route=Car(0,15,Direction::Down,{}, {14},0,2);
+        route.stopServices={{14,Direction::Down,0,2,{12,12}}};
+        CheckCost(tests,route,10,Direction::Down,22);
+    });
+    tests.Run("new passengers can alight at a previously serviced floor", [&] {
+        auto route=Car(0,3,Direction::Up,{5},{8},1,2);
+        route.stopServices={{5,Direction::Idle,1,0},{8,Direction::Down,0,1,{5}}};
+        // 5F 的原乘客消费后清零；8F 新上梯者产生另一批 5F 下客事件。
+        CheckCost(tests,route,4,Direction::Down,32);
+    });
+    tests.Run("FIFO destinations change turnaround ETA", [&] {
+        auto route=Car(0,5,Direction::Up,{6},{},0,2);
+        route.stopServices={{6,Direction::Up,0,3,{7,8,14}}};
+        // 前两人到 7/8F，后一个不登梯；5->8->3=16 秒，4 次传送=12 秒。
+        CheckCost(tests,route,3,Direction::Up,33);
+        route.stopServices[0].boardingTargetFloors={14,7,8};
+        CheckCost(tests,route,3,Direction::Up,57);
+    });
+    tests.Run("load cost uses occupancy at request", [&] {
+        auto route=Car(0,5,Direction::Up,{6},{},2,2);
+        route.stopServices={{6,Direction::Idle,2,0}};
+        // 到 8F 前两人下客：ETA=12，预计空载；按当前满载加 T 会错选空闲梯。
+        CheckCost(tests,route,8,Direction::Up,12);
+        route=Car(0,5,Direction::Up,{6},{},0,2);
+        route.stopServices={{6,Direction::Up,0,1,{12}}};
+        CheckCost(tests,route,8,Direction::Up,10.5);
+    });
+    tests.Run("known FIFO services remain read-only and deterministic", [&] {
+        const auto original=Car(0,3,Direction::Up,{4},{},0,2);
+        auto route=original; route.stopServices={{4,Direction::Up,0,2,{6,6}}};
+        for(int repeat=0;repeat<10;++repeat) CheckCost(tests,route,8,Direction::Up,22);
+        tests.Check(route.stopServices[0].boardingCount==2 && route.stopServices[0].alightingCount==0 &&
+            route.stopServices[0].boardingTargetFloors==std::vector<int>({6,6}) &&
+            route.upTasks==original.upTasks && route.downTasks==original.downTasks &&
+            route.elevator.passengerCount==0,"preview does not consume source snapshot");
+    });
+    tests.Run("invalid FIFO destination metadata rejected", [&] {
+        auto route=Car(0,3,Direction::Up,{4});
+        route.stopServices={{4,Direction::Up,0,1,{2}}};
+        tests.Check(select(8,Direction::Up,{route})==InvalidElevatorId,"wrong direction");
+        route.stopServices[0].boardingTargetFloors={21};
+        tests.Check(select(8,Direction::Up,{route})==InvalidElevatorId,"above building");
+        route.stopServices[0].boardingTargetFloors={6,7};
+        tests.Check(select(8,Direction::Up,{route})==InvalidElevatorId,"more targets than waiters");
+    });
+    tests.Run("ETA agrees with real LOOK across mixed task routes", [&] {
+        // 108 组混合内呼/双向外呼、层间剩余时间、前方/后方请求，直接对照真实状态机。
+        for(int start:{2,5,10}) for(int target:{3,8,12})
+            for(Direction initial:{Direction::Up,Direction::Down})
+                for(int request:{2,5,11}) for(Direction direction:{Direction::Up,Direction::Down})
+                {
+                    SimulationConfig config; Elevator real(0,start,config);
+                    real.AddHallCall(target,initial); real.AddInternalTarget(7);
+                    real.AddHallCall(9,Direction::Down); real.AddHallCall(4,Direction::Up);
+                    real.Advance(0.5);
+                    auto route=real.GetDispatchSnapshot();
+                    for(auto& stop:route.stopServices) stop.boardingCount=0;
+                    const bool ahead=route.elevator.direction==Direction::Up ? request>start : request<start;
+                    const bool onWay=route.elevator.direction==direction &&
+                        (ahead || (!route.betweenFloors && request==start));
+                    const double actual=RealPickupTime(real,request,direction);
+                    CheckCost(tests,route,request,direction,actual+(onWay ? 0.0 : 5.0));
+                }
     });
     tests.Run("aging bonus grows and is capped", [&] {
         tests.Near(dispatcher.GetAgingBonus(10,10),0,"no waiting bonus");

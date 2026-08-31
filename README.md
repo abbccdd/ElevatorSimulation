@@ -86,6 +86,8 @@ ElevatorSimulation/
 
 Snapshot 按值返回：UI 可以读取或修改自己的副本，但无法通过它修改仿真内部对象。UI 不获得 Floor/Elevator/Passenger 的可写指针、引用或容器；`GetConfig()` 同样返回副本。
 
+调度快照 `ElevatorDispatchSnapshot::StopService` 的 Idle 记录表示内呼/下客，Up/Down 记录表示外呼；新增 `boardingTargetFloors` 为已知等待乘客的 FIFO 目标层前缀，最多需要 capacity 人。Simulation 回填真实人数并跳过正在 Boarding 的队头；纯人数旧快照仍可使用，但不会推测未知下客楼层。`SelectElevator` / `SelectFromSnapshots` 签名保持兼容，Dispatcher 不直接读取 Passenger、Floor 或 Simulation。
+
 ## 编号、初始化与所有权
 
 楼层编号统一为 **1~L**。`m_floors` 按楼层递增存储，存储下标只是 STL 的实现细节；各对象、任务、乘客、调度请求与 Snapshot 中均使用真实楼层编号，不向调用方暴露第二套楼层编号。
@@ -149,9 +151,11 @@ Update 在下一个乘客到达、任意电梯动作完成、当前帧目标时�
 | E | ElevatorSimulationDlg.* 与必要资源 | 仍待正式参数输入、开始/暂停/继续/重置、倍速、动态刷新与动画 |
 | F | Statistics/*、Tests/* | 已接入事件统计、回归及压力测试；后续扩展算法对照场景和展示 |
 
-Dispatcher 无副作用，满载或无合理候选返回 -1。Elevator 只执行已接受任务，不自行寻找整栋楼的乘客。当前方向未完成时，新请求不能强迫反向；任务执行采用 LOOK 式扫描。满载未上梯乘客继续留队，外呼解除旧归属并重试，不丢弃剩余请求。
+Dispatcher 无副作用。当前满载梯若预测在请求层接客前释放容量，可以参与候选；若到请求层完成下客后仍满载，则不分配。无合理候选返回 -1。Elevator 只执行已接受任务，不自行寻找整栋楼的乘客。当前方向前方的内呼及双向外呼全部处理至可折返位置后才能反向；仅内呼和同向外呼触发停站服务。满载未上梯乘客继续留队，外呼解除旧归属并重试，不丢弃剩余请求。
 
-Dispatcher 的 Aging 使用 `AgingBonus = min(8.0, waitingSeconds × 0.05)`，并优先抵消非顺路方向成本；老请求可以在有限等待后接受合理折返梯，但明显更差的路线仍由 ETA 主导。ETA 快照还携带每个已知停站的下客人数和真实外呼等待人数，预演中按容量上限计算实际可上客人数。
+Dispatcher 的 Aging 保持 `AgingBonus = min(8.0, waitingSeconds × 0.05)`；`AdjustedCost = ETA + LoadCost + max(0, DirectionCost - AgingBonus)`，其中 `LoadCost = T × 请求层完成下客后的 projectedOccupancy / capacity`。顺路与空闲统一比较 Cost，反向忙碌的方向成本为 S+T，按 Cost、ETA、距离、任务数、ID 稳定排序。
+
+ETA 包含当前动作剩余时间、LOOK 路线移动、实际可上下客的逐人 T，以及请求层接客前的下客时间。下客事件消费后清零，Alighting 当前一人只计剩余时间，其余人各计 T；Boarding 预留者的席位与未来下客只计一次。已有等待乘客按 FIFO 和剩余容量预计上梯，其目标层加入局部预演任务，后续下客释放容量。预演不修改真实对象，不预测未来新乘客或未来分配；单次评分不保证全局最优及持续超载下的等待上界。
 
 统计的等待时间包含上梯 T，以完成上梯者为样本；乘梯时间包含下梯 T，以已到达者为样本。截止仍等待/乘梯者保持活动状态。比较算法时必须同时看送达量与积压，不能只比较已完成样本的均值。
 
@@ -171,11 +175,12 @@ Dispatcher 的 Aging 使用 `AgingBonus = min(8.0, waitingSeconds × 0.05)`，�
 ```powershell
 & 'C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe' '.\ElevatorSimulation.sln' /t:Build /p:Configuration=Debug /p:Platform=x64 /m /nologo
 & '.\Tests\RunCoreSmokeTests.cmd'
+& '.\Tests\RunCoreSmokeTests.cmd' x86
 & '.\Tests\RunCoreTests.cmd' All x64
 & '.\Tests\RunCoreTests.cmd' All x86
 ```
 
-测试脚本通过 vswhere 使用现有 MSVC，以 C++17、`/W4 /WX` 独立编译 Core/Statistics，不包含或链接 MFC，也不增加第二个 VS 工程。原冒烟脚本使用 x64，新增测试脚本支持 x64/x86。输出位于 `build/core-tests/`。它验证偶数/奇数/最低楼层初始化、三组分配、非法参数（含 NaN/inf）、失败保留旧状态、快照副本隔离、暂停/继续/重置、倍速及截止时间、乘客基本约束、调度基本分配行为。新增测试另行覆盖状态机和完整事件流程。退出码非零表示编译或验证失败。
+测试脚本通过 vswhere 使用现有 MSVC，以 C++17、`/W4 /WX` 独立编译 Core/Statistics，不包含或链接 MFC，也不增加第二个 VS 工程。冒烟脚本默认 x64，也支持参数 x86；新增核心测试脚本支持 x64/x86。输出分别位于 `build/core-smoke/<arch>/` 与 `build/core-tests/<arch>/`。冒烟测试的原 406 项检查完整保留；新增测试覆盖状态机、FIFO 预演和完整事件流程。退出码非零表示编译或验证失败。
 
 若出现 C1010，检查新核心文件是否误启用了 MFC PCH；若中文乱码，检查 C++ 的 `/utf-8` 和资源编码；若启动提示 MFC DLL 缺失，检查对应架构的现有 VS/MFC 运行环境，不能以改写核心依赖来规避。Debug 运行需要开发环境，不作为分发包；后续分发 Release 再处理相应 VC++ 运行库。
 
@@ -197,17 +202,17 @@ Dispatcher 的 Aging 使用 `AgingBonus = min(8.0, waitingSeconds × 0.05)`，�
 | 验证项 | 结果 |
 | --- | --- |
 | 原 CoreSmokeTests | 406 项检查通过，未删除任何检查 |
-| Dispatcher | 52 个场景、85 项断言通过 |
+| Dispatcher | 66 个场景、366 项断言通过（含 108 组真实 LOOK 路线对照） |
 | Elevator（含群控联合与最近距离对照） | 22 个场景、62 项断言通过 |
-| Simulation（含随机、压力、所有权） | 33 个场景、1,953 项断言通过 |
-| 新增测试架构 | x64 与 x86 均通过，合计每个架构 107 场景 / 2,100 断言 |
+| Simulation（含随机、压力、所有权） | 34 个场景、1,953 项断言通过 |
+| 新增测试架构 | x64 与 x86 均通过，合计每个架构 122 场景 / 2,381 断言，另有各 406 项 Smoke |
 | Debug x64 / Release x64 / Debug x86 / Release x86 全量重新生成 | 全部 0 警告、0 错误 |
 | 2,000 人有限批次 | 足够时长后全部送达，无活动 ID 或外呼遗留 |
-| 高客流：seed=321，λ=8，600 秒 | 生成 4,815，送达 3,288，等待 1,509，乘梯 18，人数守恒 |
-| 一小时：seed=987，λ=0.6 | 生成 2,186，送达 2,173，全部采样一致性检查通过 |
+| 高客流：seed=321，λ=8，600 秒 | 生成 4,815，送达 3,381，等待 1,413，乘梯 21，人数守恒 |
+| 一小时：seed=987，λ=0.6 | 生成 2,186，送达 2,174，全部采样一致性检查通过 |
 | 固定任务对照 | 同向路线实际响应 10 秒，纯最近距离选择需 30 秒；不代表所有客流均优 |
 
-具体配置见 Tests/SimulationTests.cpp。本轮日志位于 `build/verification/core-implementation/`；主 App、PCH、`.rc`、Resource.h 和布局未修改，Dialog 仅更新三处提示文字。
+具体配置见 Tests/SimulationTests.cpp。本次 ETA 一致性修复日志位于 `build/verification/dispatcher-look/`，不提交生成文件；主 App、PCH、`.rc`、Resource.h、Dialog、UI 布局及 Statistics 本次均未修改。
 
 ## 使用核心与下一步
 

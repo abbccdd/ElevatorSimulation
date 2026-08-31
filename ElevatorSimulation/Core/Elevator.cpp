@@ -58,10 +58,13 @@ ElevatorDispatchSnapshot Elevator::GetDispatchSnapshot() const
         if (alightingCount != 0)
             snapshot.stopServices.push_back({ floor, Direction::Idle, alightingCount, 0 });
         if (m_upHallCalls.count(floor) != 0)
-            snapshot.stopServices.push_back({ floor, Direction::Up, 0, 1 });
+            snapshot.stopServices.push_back({ floor, Direction::Up, 0,
+                m_state == ElevatorState::Boarding && floor == m_currentFloor && m_direction == Direction::Up ? 0 : 1 });
         if (m_downHallCalls.count(floor) != 0)
-            snapshot.stopServices.push_back({ floor, Direction::Down, 0, 1 });
-        if (alightingCount == 0 && m_upHallCalls.count(floor) == 0 && m_downHallCalls.count(floor) == 0)
+            snapshot.stopServices.push_back({ floor, Direction::Down, 0,
+                m_state == ElevatorState::Boarding && floor == m_currentFloor && m_direction == Direction::Down ? 0 : 1 });
+        if (alightingCount == 0 && (m_carCalls.count(floor) != 0 ||
+            (m_upHallCalls.count(floor) == 0 && m_downHallCalls.count(floor) == 0)))
             snapshot.stopServices.push_back({ floor, Direction::Idle, 0, 0 });
     }
     if (m_state == ElevatorState::Boarding)

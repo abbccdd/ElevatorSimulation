@@ -131,6 +131,35 @@ int main()
         simulation.Start(); simulation.Update(0.5); tests.Check(simulation.GetHallCallSnapshots().size()==2,"two directions");
         simulation.Update(50); tests.Check(simulation.GetStatisticsSnapshot().arrivedCount==2 && simulation.ValidateState(),"both served");
     });
+    tests.Run("dispatch snapshots preserve FIFO targets and skip boarding reservation", [&] {
+        auto config=Config(); config.floorCount=20; config.moveTimePerFloor=1;
+        config.personTime=1; config.simulationDuration=200;
+        for(bool nearFirst:{true,false})
+        {
+            Simulation simulation; simulation.Initialize(config,42);
+            simulation.AddPassenger(1,12); // 当前 Boarding 者必须跳过，未来目标已经由 Elevator 提供。
+            simulation.AddPassenger(1,nearFirst ? 6 : 12);
+            simulation.AddPassenger(1,nearFirst ? 12 : 6);
+            for(int passenger=0;passenger<2;++passenger)
+            {
+                simulation.AddPassenger(20,1);
+                simulation.AddPassenger(10,20);
+            }
+            simulation.Start(); simulation.Update(0.1);
+            tests.Check(simulation.GetElevatorSnapshots()[0].state==ElevatorState::Boarding &&
+                simulation.GetFloorSnapshots()[0].upWaitingCount==3,"pending person remains queue head");
+            simulation.AddPassenger(8,9); simulation.Update(0.01);
+            int owner=InvalidElevatorId;
+            for(const auto& call:simulation.GetHallCallSnapshots())
+                if(call.floorNumber==8 && call.direction==Direction::Up) owner=call.assignedElevatorId;
+            tests.Check(nearFirst ? owner==0 : owner!=0 && owner!=InvalidElevatorId,
+                "only the actual FIFO second passenger can free the second seat before 8F");
+            tests.Check(simulation.ValidateState(),"snapshot assembly does not change queue ownership");
+            simulation.Update(190);
+            tests.Check(simulation.GetStatisticsSnapshot().arrivedCount==8 && simulation.ValidateState(),
+                "all known passengers still delivered");
+        }
+    });
     tests.Run("new request cannot reverse occupied car", [&] {
         Simulation simulation; simulation.Initialize(Config(),42); simulation.AddPassenger(1,6); simulation.Start(); simulation.Update(4);
         simulation.AddPassenger(2,1); simulation.AddPassenger(5,6); simulation.Update(0.5);
@@ -223,7 +252,7 @@ int main()
         simulation.AddPassenger(1,6); simulation.AddPassenger(6,1); simulation.Start(); simulation.Update(0.01);
         simulation.AddPassenger(3,6); simulation.Update(3.1);
         tests.Check(simulation.GetStatisticsSnapshot().ridingCount==3,"fixture has three full cars");
-        // 2F 下行在三台满载梯到达前都不会经过其已知目标层，必须保持未分配。
+        // 当前满载不等于无法分配；预测折返前可下客的梯可提前接受，请求仍保留到上梯完成。
         simulation.AddPassenger(2,1); simulation.Update(0.1); const auto calls=simulation.GetHallCallSnapshots();
         tests.Check(calls.size()==1 && calls[0].waitingCount==1,"full cars preserve pending request");
         simulation.Update(200); tests.Check(simulation.GetStatisticsSnapshot().arrivedCount==4 && simulation.ValidateState(),"retry after capacity released");

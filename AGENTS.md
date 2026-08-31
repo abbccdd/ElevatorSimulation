@@ -17,14 +17,16 @@
 - 新增 C++ 文件 UTF-8，各配置 `/utf-8`；原 `.rc` 保留 UTF-16，不随意改变资源编码。
 - PascalCase 类名/函数，camelCase 局部变量，`m_` 成员；中文注释，RAII、STL、enum class、nullptr，新增代码避免裸 new/delete。
 - 用户已授权实现 Dispatcher/Elevator/Simulation，并对 Passenger/Floor/Statistics 作必要适配；不要把已实现功能退回占位，也不要擅自扩展正式动画或高级 AI 策略。
-- Dispatcher 只读评分；顺路与空闲统一比较 Cost/ETA，非顺路忙碌附加 S+T 成本，不设绝对等级。按 Cost、ETA、距离、任务数、ID 排序；满载（含上梯预留）不分配，禁止直接操作 Elevator 的状态。
+- Dispatcher 只读评分；顺路与空闲统一比较 Cost/ETA，非顺路忙碌附加 S+T 成本，不设绝对等级。按 Cost、ETA、距离、任务数、ID 排序；当前满载梯若预测在请求层接客前释放容量，可以参与候选；若到请求层完成下客后仍满载，则不分配。禁止直接操作 Elevator 的状态。
+- ETA 与 Elevator LOOK 一致：用所有前方内呼和双向外呼决定继续扫描/折返，只在内呼或同向外呼处服务。每批下客消费后清零；Alighting 当前一人仅计剩余时间，其余下客逐人计 T；Boarding 预留人数与未来下客只计一次。
+- Simulation 按 FIFO 填充调度快照中的真实 waitingCount 与 boardingTargetFloors（最多 capacity 人的前缀），排除当前 Boarding 队头预留者。Dispatcher 按剩余容量取前缀，并将实际上梯者目标层加入局部任务；LoadCost = T × 请求层完成下客后的 projectedOccupancy / capacity。保留 Aging 上限及既有接口。
 - Elevator 仅执行已接受任务，层间运动和上下客中不能因新请求反向。Advance 最多返回一个事件，调用方必须处理其余时间预算。
 - 时间全部以仿真秒处理，只有 Simulation::Update 将真实秒乘一次 simulationSpeed。同步处理所有电梯事件，不按电梯逐台推进整帧。
 - passengerRate 单位为全楼人数/仿真秒，Poisson 指数间隔。固定种子用于可重复测试；Reset 保留本轮 seed。
 - Hall Call 由 Simulation 按(楼层,方向)唯一管理；满载剩余人数留队重分配。上梯 T 完成才出队，下梯 T 完成才从活动注册表删除。
 - 截止前允许产生乘客，截止时完成的动作计入，但不推进到总时长之后。统计均值口径见 docs/AlgorithmDesign.md，不把未完成样本悄悄计入已完成均值。
 - 未实现部分必须明确 TODO，不能将占位返回值或零统计声称为完整功能。
-- 基础验证：原 `Tests/RunCoreSmokeTests.cmd` 的 406 项检查不得删除。运行 `Tests/RunCoreTests.cmd All x64`（及 x86），生成 Debug/Release × x64/x86 四配置。测试无需另建 VS 工程或安装库。
+- 基础验证：原 `Tests/RunCoreSmokeTests.cmd` 的 406 项检查不得删除（默认 x64，也支持参数 x86）。运行 `Tests/RunCoreTests.cmd All x64`（及 x86）和双架构 Smoke，生成 Debug/Release × x64/x86 四配置。测试无需另建 VS 工程或安装库。
 
 ## 模块负责人
 
