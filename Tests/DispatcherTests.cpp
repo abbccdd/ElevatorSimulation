@@ -5,14 +5,16 @@
 namespace
 {
     ElevatorDispatchSnapshot Car(int id, int floor, Direction direction = Direction::Idle,
-        std::vector<int> up = {}, std::vector<int> down = {}, int passengers = 0)
+        std::vector<int> up = {}, std::vector<int> down = {}, int passengers = 0, int capacity = 10)
     {
         ElevatorDispatchSnapshot car;
         car.elevator = { id, floor, direction,
-            direction == Direction::Idle ? ElevatorState::Idle : ElevatorState::Stopped, passengers, 10 };
+            direction == Direction::Idle ? ElevatorState::Idle : ElevatorState::Stopped, passengers, capacity };
         car.floorCount = 20;
         car.upTasks = std::move(up);
         car.downTasks = std::move(down);
+        for (int stop : car.upTasks) car.stopServices.push_back({ stop, Direction::Up, 0, 1 });
+        for (int stop : car.downTasks) car.stopServices.push_back({ stop, Direction::Down, 0, 1 });
         return car;
     }
 }
@@ -66,6 +68,7 @@ int main()
     });
     tests.Run("multiple passenger events beat fixed stop estimate", [&] {
         auto route=Car(0,5,Direction::Up,{7,8,15});
+        route.stopServices.clear();
         route.stopServices.push_back({7,Direction::Idle,2,0});
         route.stopServices.push_back({8,Direction::Up,0,3});
         // Route ETA = 10 seconds movement + 15 seconds for five known transfers;
@@ -74,8 +77,74 @@ int main()
     });
     tests.Run("known alighting count affects ETA", [&] {
         auto route=Car(0,5,Direction::Up,{7,15});
+        route.stopServices.clear();
         route.stopServices.push_back({7,Direction::Idle,3,0});
         tests.Check(select(10,Direction::Up,{route,Car(1,1)})==1,"known alighting passengers add T each");
+    });
+    tests.Run("full car can free a seat before request", [&] {
+        auto full=Car(0,1,Direction::Up,{5}, {}, 2, 2);
+        full.stopServices.clear();
+        full.stopServices.push_back({5,Direction::Idle,1,0});
+        auto distant=Car(1,1); distant.moveTimePerFloor=10;
+        tests.Check(select(10,Direction::Up,{full,distant})==0,"projected alighting frees capacity");
+    });
+    tests.Run("full car without an earlier alighting is rejected", [&] {
+        auto full=Car(0,1,Direction::Up,{5}, {}, 2, 2);
+        full.stopServices.clear();
+        full.stopServices.push_back({5,Direction::Idle,0,0});
+        tests.Check(select(10,Direction::Up,{full,Car(1,1)})==1,"still full at request");
+    });
+    tests.Run("waiting five uses only two remaining seats", [&] {
+        auto route=Car(0,5,Direction::Up,{7,10}, {}, 8, 10);
+        route.stopServices.clear();
+        route.stopServices.push_back({7,Direction::Up,0,5});
+        route.stopServices.push_back({10,Direction::Idle,1,0});
+        // Capped ETA is 16s; charging all five would be 25s and lose to
+        // the 20.7s idle alternative.
+        auto distant=Car(1,1); distant.moveTimePerFloor=2.3;
+        tests.Check(select(10,Direction::Up,{route,distant})==0,"boarding is capped by projected capacity");
+    });
+    tests.Run("waiting count changes intermediate ETA", [&] {
+        auto one=Car(0,5,Direction::Up,{7,10});
+        one.stopServices.clear();
+        one.stopServices.push_back({7,Direction::Up,0,1});
+        auto five=one; five.stopServices[0].boardingCount=5; five.elevator.id=0;
+        const auto alternate=Car(1,1);
+        tests.Check(select(10,Direction::Up,{one,alternate})==0,"one waiting passenger route wins");
+        tests.Check(select(10,Direction::Up,{five,alternate})==1,"five waiting passengers delay route");
+    });
+    tests.Run("boarding snapshot includes future alighting", [&] {
+        SimulationConfig config; config.capacity=1;
+        Elevator car(0,1,config);
+        tests.Check(car.AddHallCall(1,Direction::Up) && car.BeginBoarding(7,8),"begin boarding");
+        car.Advance(1.0);
+        const auto boarding=car.GetDispatchSnapshot();
+        bool found=false;
+        for(const auto& stop:boarding.stopServices)
+            if(stop.floor==8 && stop.direction==Direction::Idle && stop.alightingCount==1) found=true;
+        auto distant=Car(1,1); distant.moveTimePerFloor=3;
+        tests.Check(found && select(10,Direction::Up,{boarding,distant})==0,"pending target frees projected seat");
+    });
+    tests.Run("boarding reservation is not counted as another waiter", [&] {
+        auto boarding=Car(0,5,Direction::Up,{7,10}, {}, 0, 2);
+        boarding.elevator.state=ElevatorState::Boarding;
+        boarding.remainingActionTime=1;
+        boarding.reservedBoardingCount=1;
+        boarding.stopServices.clear();
+        boarding.stopServices.push_back({5,Direction::Up,0,0});
+        boarding.stopServices.push_back({7,Direction::Idle,0,0});
+        boarding.stopServices.push_back({10,Direction::Idle,0,0});
+        auto alternate=Car(1,1); alternate.moveTimePerFloor=2;
+        tests.Check(select(10,Direction::Up,{boarding,alternate})==0,"queue head reservation is not duplicated");
+    });
+    tests.Run("all projected cars full remain unassigned", [&] {
+        auto first=Car(0,1,Direction::Up,{5}, {}, 2, 2);
+        auto second=Car(1,6,Direction::Down,{}, {2}, 2, 2);
+        first.stopServices.clear();
+        second.stopServices.clear();
+        first.stopServices.push_back({5,Direction::Idle,0,0});
+        second.stopServices.push_back({2,Direction::Idle,0,0});
+        tests.Check(select(10,Direction::Up,{first,second})==InvalidElevatorId,"no projected seat");
     });
     tests.Run("aging bonus grows and is capped", [&] {
         tests.Near(dispatcher.GetAgingBonus(10,10),0,"no waiting bonus");

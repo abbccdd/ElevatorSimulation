@@ -18,12 +18,23 @@ namespace
         return direction == Direction::Up || direction == Direction::Down;
     }
 
-    // 仅在局部副本上预演 LOOK，不修改真实 Elevator。每个已知乘客都按
-    // 实际下客/上客人数计时；未知外呼按 Elevator 快照中的一人保守估计。
-    double EstimatePickupTime(int requestFloor, Direction requestDirection,
+    struct RouteEstimate
+    {
+        double eta = std::numeric_limits<double>::infinity();
+        int projectedOccupancy = 0;
+        bool reachedRequest = false;
+    };
+
+    // 仅在局部副本上预演 LOOK，不修改真实 Elevator。每个快照中的已知
+    // 下客/上客都按实际人数计时；Simulation 会在调用前回填外呼等待人数。
+    RouteEstimate EstimatePickupTime(int requestFloor, Direction requestDirection,
         const ElevatorDispatchSnapshot& snapshot)
     {
         const auto& car = snapshot.elevator;
+        RouteEstimate result;
+        result.projectedOccupancy = car.passengerCount + snapshot.reservedBoardingCount;
+        if (result.projectedOccupancy < 0 || result.projectedOccupancy > car.capacity)
+            return result;
         std::set<int> up(snapshot.upTasks.begin(), snapshot.upTasks.end());
         std::set<int> down(snapshot.downTasks.begin(), snapshot.downTasks.end());
         (requestDirection == Direction::Up ? up : down).insert(requestFloor);
@@ -39,20 +50,12 @@ namespace
             if (stop.floor < 1 || (snapshot.floorCount > 0 && stop.floor > snapshot.floorCount) ||
                 stop.alightingCount < 0 || stop.boardingCount < 0 ||
                 (stop.direction != Direction::Idle && !IsTravelDirection(stop.direction)))
-                return std::numeric_limits<double>::infinity();
+                return result;
             if (stop.direction == Direction::Idle)
-            {
-                service[{ stop.floor, Direction::Up }] += stop.alightingCount;
-                service[{ stop.floor, Direction::Down }] += stop.alightingCount;
-            }
+                service[{ stop.floor, Direction::Idle }] += stop.alightingCount;
             else
                 service[{ stop.floor, stop.direction }] += stop.boardingCount;
         }
-        // 快照测试或旧调用方可能只提供任务集合；此兼容回退仍按一个已知服务人计时。
-        if (snapshot.stopServices.empty())
-            for (int floor : up) service[{ floor, Direction::Up }] = 1;
-        if (snapshot.stopServices.empty())
-            for (int floor : down) service[{ floor, Direction::Down }] = 1;
         int floor = car.currentFloor;
         Direction direction = car.direction;
         double time = snapshot.remainingActionTime;
@@ -62,18 +65,40 @@ namespace
         {
             // 当前一人的传送必须完成后才能响应其他请求；该时间已在快照中给出。
             if (direction != Direction::Up && direction != Direction::Down)
-                return std::numeric_limits<double>::infinity();
+                return result;
         }
         if (car.state == ElevatorState::Idle)
-            return std::abs(static_cast<double>(requestFloor) - car.currentFloor) * snapshot.moveTimePerFloor;
+        {
+            result.eta = std::abs(static_cast<double>(requestFloor) - car.currentFloor) * snapshot.moveTimePerFloor;
+            if (requestFloor == car.currentFloor)
+                result.projectedOccupancy = (std::max)(0, result.projectedOccupancy -
+                    service[{ requestFloor, Direction::Idle }]);
+            result.reachedRequest = result.projectedOccupancy < car.capacity;
+            return result;
+        }
         const std::size_t visitLimit = 4 * (up.size() + down.size()) + 8;
         for (std::size_t visit = 0; visit < visitLimit; ++visit)
         {
             auto& active = direction == Direction::Up ? up : down;
             if (floor == requestFloor && direction == requestDirection)
-                return time;
+            {
+                // 先释放该层已知下客，再判断新外呼至少能否预留一席。
+                result.projectedOccupancy = (std::max)(0, result.projectedOccupancy -
+                    service[{ floor, Direction::Idle }]);
+                result.eta = time;
+                result.reachedRequest = result.projectedOccupancy < car.capacity;
+                return result;
+            }
             if (active.erase(floor) != 0)
-                time += static_cast<double>(service[{ floor, direction }]) * snapshot.personTime;
+            {
+                result.projectedOccupancy = (std::max)(0, result.projectedOccupancy -
+                    service[{ floor, Direction::Idle }]);
+                const int boarding = (std::max)(0, service[{ floor, direction }]);
+                const int available = (std::max)(0, car.capacity - result.projectedOccupancy);
+                const int actualBoarding = (std::min)(boarding, available);
+                result.projectedOccupancy += actualBoarding;
+                time += static_cast<double>(actualBoarding + service[{ floor, Direction::Idle }]) * snapshot.personTime;
+            }
             int nextFloor = floor;
             bool found = false;
             for (int target : active)
@@ -95,10 +120,10 @@ namespace
             {
                 direction = direction == Direction::Up ? Direction::Down : Direction::Up;
                 if (up.empty() && down.empty())
-                    return std::numeric_limits<double>::infinity();
+                    return result;
             }
         }
-        return std::numeric_limits<double>::infinity();
+        return result;
     }
 }
 
@@ -135,7 +160,8 @@ int ElevatorDispatcher::SelectFromSnapshots(int requestFloor, Direction requestD
         const auto& car = snapshot.elevator;
         if (car.id < 0 || car.currentFloor < 1 || car.capacity <= 0 || car.passengerCount < 0 ||
             snapshot.reservedBoardingCount < 0 ||
-            car.passengerCount >= car.capacity - snapshot.reservedBoardingCount ||
+            snapshot.reservedBoardingCount > car.capacity ||
+            car.passengerCount > car.capacity - snapshot.reservedBoardingCount ||
             (snapshot.floorCount > 0 && (requestFloor > snapshot.floorCount ||
                 car.currentFloor > snapshot.floorCount ||
                 (requestFloor == snapshot.floorCount && requestDirection == Direction::Up))) ||
@@ -162,7 +188,10 @@ int ElevatorDispatcher::SelectFromSnapshots(int requestFloor, Direction requestD
             requestFloor < car.currentFloor;
         const bool onWay = !idle && car.direction == requestDirection &&
             (ahead || (!snapshot.betweenFloors && requestFloor == car.currentFloor));
-        const double eta = EstimatePickupTime(requestFloor, requestDirection, snapshot);
+        const RouteEstimate estimate = EstimatePickupTime(requestFloor, requestDirection, snapshot);
+        if (!estimate.reachedRequest)
+            continue;
+        const double eta = estimate.eta;
         // 顺路与空闲统一比较成本。非顺路忙碌梯增加 S+T 的有限策略成本，
         // 实际返程/折返耗时已计入 ETA；该附加项不代表额外物理耗时。
         const double directionCost = idle || onWay ? 0.0 :

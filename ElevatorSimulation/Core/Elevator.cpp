@@ -46,11 +46,15 @@ ElevatorDispatchSnapshot Elevator::GetDispatchSnapshot() const
     serviceFloors.insert(m_downTasks.begin(), m_downTasks.end());
     for (const auto& destination : m_destinations)
         serviceFloors.insert(destination.second);
+    if (m_state == ElevatorState::Boarding)
+        serviceFloors.insert(m_pendingTarget);
     for (int floor : serviceFloors)
     {
         int alightingCount = 0;
         for (const auto& destination : m_destinations)
             if (destination.second == floor) ++alightingCount;
+        if (m_state == ElevatorState::Boarding && m_pendingTarget == floor)
+            ++alightingCount;
         if (alightingCount != 0)
             snapshot.stopServices.push_back({ floor, Direction::Idle, alightingCount, 0 });
         if (m_upHallCalls.count(floor) != 0)

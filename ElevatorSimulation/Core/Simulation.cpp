@@ -233,8 +233,10 @@ bool Simulation::DispatchCalls()
     bool changed = false;
     for (auto call : pending)
     {
+        // 每次成功分配后重新组装，后续外呼能看到最新任务与真实队列人数。
+        const auto snapshots = BuildDispatchSnapshots();
         const auto [floor, direction] = call->first;
-        const int id = m_dispatcher.SelectElevator(floor, direction, m_elevators,
+        const int id = m_dispatcher.SelectFromSnapshots(floor, direction, snapshots,
             call->second.firstRequestTime, m_currentTime);
         if (id != InvalidElevatorId)
         {
@@ -245,6 +247,38 @@ bool Simulation::DispatchCalls()
         }
     }
     return changed;
+}
+
+std::vector<ElevatorDispatchSnapshot> Simulation::BuildDispatchSnapshots() const
+{
+    auto snapshots = std::vector<ElevatorDispatchSnapshot>();
+    snapshots.reserve(m_elevators.size());
+    for (const auto& elevator : m_elevators)
+        snapshots.push_back(elevator.GetDispatchSnapshot());
+
+    for (std::size_t index = 0; index < snapshots.size(); ++index)
+    {
+        const auto elevatorState = snapshots[index].elevator;
+        const auto& elevator = m_elevators[index];
+        for (auto& stop : snapshots[index].stopServices)
+        {
+            if ((stop.direction != Direction::Up && stop.direction != Direction::Down) ||
+                !elevator.HasHallCall(stop.floor, stop.direction))
+                continue;
+            const auto& waiting = m_floors[static_cast<std::size_t>(stop.floor - 1)].GetWaitingIds(stop.direction);
+            std::size_t waitingCount = waiting.size();
+            // Boarding 中的队头仍在 Floor，预留席位已经计入 occupancy，不能重复算入 ETA。
+            if (elevatorState.state == ElevatorState::Boarding &&
+                elevatorState.currentFloor == stop.floor && elevatorState.direction == stop.direction)
+            {
+                const std::size_t reserved = static_cast<std::size_t>(snapshots[index].reservedBoardingCount);
+                waitingCount = waitingCount > reserved ? waitingCount - reserved : 0;
+            }
+            stop.boardingCount = static_cast<int>((std::min)(waitingCount,
+                static_cast<std::size_t>((std::numeric_limits<int>::max)())));
+        }
+    }
+    return snapshots;
 }
 
 void Simulation::ReleaseHallCall(int floor, Direction direction, int elevatorId)

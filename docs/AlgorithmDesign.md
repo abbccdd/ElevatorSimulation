@@ -58,6 +58,8 @@ Cost = ETA
 
 其中 Aging 采用 `AgingBonus = min(8.0, waitingSeconds × 0.05)`。实际调整为 `AdjustedCost = ETA + LoadCost + max(0, DirectionCost - AgingBonus)`：等待越久，非顺路方向成本越容易被抵消；8 秒上限保证明显糟糕的 ETA 仍不会被无条件选中。请求时间由 Simulation 的 Hall Call 快照传入，Dispatcher 不拥有或修改请求对象。
 
+Simulation 在调用快照入口前，会按每个已分配外呼的 `(floor, direction)` 从 Floor 队列回填真实 `waitingCount`；若该梯正在 Boarding，则扣除当前一人的 `reservedBoardingCount`。Dispatcher 从 `passengerCount + reservedBoardingCount` 初始化 `projectedOccupancy`，每到一站先减已知下客，再按 `min(waitingCount, capacity - projectedOccupancy)` 增加预计上客并只累计这些实际传送人的 T。请求楼层若仍无空位则排除该候选；途中已知下客释放容量则可重新参与评分。Boarding 中的 pending target 也作为一名未来下客写入快照。
+
 沿用原状态，不添加第二套运行枚举：
 
 ```mermaid

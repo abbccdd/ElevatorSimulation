@@ -223,8 +223,9 @@ int main()
         simulation.AddPassenger(1,6); simulation.AddPassenger(6,1); simulation.Start(); simulation.Update(0.01);
         simulation.AddPassenger(3,6); simulation.Update(3.1);
         tests.Check(simulation.GetStatisticsSnapshot().ridingCount==3,"fixture has three full cars");
-        simulation.AddPassenger(4,1); simulation.Update(0.1); const auto calls=simulation.GetHallCallSnapshots();
-        tests.Check(calls.size()==1 && calls[0].assignedElevatorId==-1,"all full returns unassigned");
+        // 2F 下行在三台满载梯到达前都不会经过其已知目标层，必须保持未分配。
+        simulation.AddPassenger(2,1); simulation.Update(0.1); const auto calls=simulation.GetHallCallSnapshots();
+        tests.Check(calls.size()==1 && calls[0].waitingCount==1,"full cars preserve pending request");
         simulation.Update(200); tests.Check(simulation.GetStatisticsSnapshot().arrivedCount==4 && simulation.ValidateState(),"retry after capacity released");
     });
     tests.Run("finite batch drains without passenger loss", [&] {

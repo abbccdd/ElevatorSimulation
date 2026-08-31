@@ -72,6 +72,7 @@ private:
     double m_nextArrivalTime = 0.0;
 
     void GenerateDuePassengers();
+    std::vector<ElevatorDispatchSnapshot> BuildDispatchSnapshots() const;
     bool DispatchCalls();
     void StabilizeCurrentTime();
     void ReleaseHallCall(int floor, Direction direction, int elevatorId);
