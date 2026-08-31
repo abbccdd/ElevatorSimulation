@@ -1,0 +1,11 @@
+# Visual Studio 本机缓存及可重新生成的编译产物。
+.vs/
+**/Debug/
+**/Release/
+**/x64/
+**/x86/
+build/
+*.user
+*.aps
+*.VC.db
+*.VC.opendb
