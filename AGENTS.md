@@ -26,7 +26,8 @@
 - Hall Call 由 Simulation 按(楼层,方向)唯一管理；满载剩余人数留队重分配。上梯 T 完成才出队，下梯 T 完成才从活动注册表删除。
 - Hall Call 在新乘客、到层、上下客完成/状态变化等模型事件后重评估，不在纯帧边界评估。同一仿真时刻只改派一轮。先评分原梯；请求层真正 Stopped/Boarding/Alighting 且非 betweenFloors 时始终保护。原梯不可行时绕过普通临近锁、10 秒冷却和 5 秒收益阈值；仍可行时才应用这些滞回条件。临近锁仅保护 betweenFloors 且 Moving 方向朝向请求层、整数层距离 <=1 的原梯；同层已驶离或一层内正在远离不锁定。阈值统一在 Dispatcher.h，Simulation 同步两梯外呼及归属。
 - Elevator::RemoveHallCall 只撤销指定方向外呼；当前层真正 Stopped/Boarding/Alighting 禁止，Moving 中 currentFloor 是已驶离整数层时允许。不能删除内呼或改变当前动作、方向、剩余时间。改派提交只对已选定两台梯准备副本后移动回写，不用于搜索试组合；既有 Elevator 状态机不得重构。
-- 联合分配每批取最老 3 个未分配外呼，每层搜索最多 3 个候选梯 + 暂不分配，最多 64 个叶组合。只能在局部快照中逐项加任务，最终重算各请求 ETA/载荷。先最大化可分配数量，再按总 Cost、最大 ETA、总 ETA、请求顺序中的电梯 ID 稳定比较；方向惩罚沿用各请求插入前上下文，Aging 保留。允许同梯多请求和部分未分配。同一 DispatchCalls 内提交后重建快照并继续下一批，直到无 pending 或本批 assignedCount=0；成功批次严格减少 pending，循环内不重复动态改派。
+- 联合分配每批取最老 3 个 Active 未分配外呼，每层搜索最多 3 个候选梯 + 暂不分配，最多 64 个叶组合。只能在局部快照中逐项加任务，最终重算各请求 ETA/载荷。先最大化可分配数量，再按总 Cost、最大 ETA、总 ETA、请求顺序中的电梯 ID 稳定比较；方向惩罚沿用各请求插入前上下文，Aging 保留。允许同梯多请求和部分未分配。同一 DispatchCalls 内提交后重建快照并重新预筛下一批，直到无 Active pending 或本批 assignedCount=0；成功批次严格减少 pending，循环内不重复动态改派。
+- 未分配外呼按 firstRequestTime / firstPassengerId / key 排序，并复用 ScoreSnapshot 预筛：存在可行候选为 Active，全部不可行为临时 DeferredCapacity，不占三个请求名额。Deferred 不保存为永久状态，不删 Floor/HallCall，不重置队头 ID 或等待时间；Alighted、改派/撤销/释放等容量或路线事件通过既有 m_dispatchDirty 重新评估，同一调度内路线变化则直接重建快照。禁止第二套容量逻辑、UI 每帧扫描或额外定时事件；不扩 UI 公共接口。
 - 固定归属贪心基线为 0fade614d5095eb14b3cb63916af876f3d2e1aa3；Tests/RunDispatchComparison.ps1 在 build 内只读导出，使用同一客流/工具链比较。不得隐瞒退化场景、积压或计算开销，不声称全局最优。
 - 截止前允许产生乘客，截止时完成的动作计入，但不推进到总时长之后。统计均值口径见 docs/AlgorithmDesign.md，不把未完成样本悄悄计入已完成均值。
 - 未实现部分必须明确 TODO，不能将占位返回值或零统计声称为完整功能。

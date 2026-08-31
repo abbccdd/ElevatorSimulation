@@ -163,7 +163,9 @@ Hall Call 动态改派只由新乘客、到层、上下客完成和零耗时状�
 
 `RemoveHallCall` 只删除指定方向外呼：当前层 Stopped/Boarding/Alighting 禁止撤销，Moving 中已经离开的整数层允许撤销。内呼、当前方向、动作状态和剩余时间保持不变，后续事件继续由既有 Elevator 状态机处理。
 
-未分配请求按队头时间/ID 排序，每批只规划最老 3 个；每个请求最多选 3 台候选梯和“暂不分配”，每批最多 64 个组合。每插入一个请求就在局部快照增加任务、FIFO 上客及未来下客，再计算后续请求；最终还会重算较早请求被新增任务影响后的 ETA/载荷。先最大化可分配数量，再依总 Cost、最大 ETA、总 ETA、请求顺序中的电梯 ID 比较。一次 DispatchCalls 内提交本批、重建快照并继续处理最老 pending，直到没有 pending 或本批 `assignedCount == 0`。每个成功批次至少减少一个 pending，不推进时间、不反复改派；完全不可行的最老批次会使本轮退出，后续事件再重试。候选截断和有限批次不等于全局最优。
+未分配请求按 firstRequestTime / firstPassengerId / key 排序，再逐个用当前完整快照调用现有 ScoreSnapshot。存在至少一台 feasible 候选时为 Active；全部不可服务时为临时 DeferredCapacity，不占联合分配的三个名额。例如前三个 Deferred、后面三个 Active，后面三个直接组成联合批次。Deferred 不保存为永久请求状态，不删除真实 Floor/HallCall，不重置原等待时间或 FIFO 队头；容量释放或路线结构变化后的调度事件会重新评估。沿用 m_dispatchDirty，包括 Alighted 和外呼改派/释放/撤销，不增加定时事件或 UI 每帧扫描，也不扩 UI 公共接口。DeferredCapacity 是核心调度语义，后续 UI 可显示为灰色“等待运力”。
+
+每批只规划最老 3 个 Active 请求；每个请求最多选 3 台候选梯和“暂不分配”，每批最多 64 个组合。每插入一个请求就在局部快照增加任务、FIFO 上客及未来下客，再计算后续请求；最终还会重算较早请求被新增任务影响后的 ETA/载荷。先最大化可分配数量，再依总 Cost、最大 ETA、总 ETA、请求顺序中的电梯 ID 比较。一次 DispatchCalls 内提交本批、重建快照并重新预筛剩余 pending，直到没有 Active pending 或本批 assignedCount == 0。每个成功批次至少减少一个 pending，不推进时间、不反复改派；所有请求 Deferred 时正常退出并全部留队。候选截断和有限批次不等于全局最优。
 
 统计的等待时间包含上梯 T，以完成上梯者为样本；乘梯时间包含下梯 T，以已到达者为样本。截止仍等待/乘梯者保持活动状态。比较算法时必须同时看送达量与积压，不能只比较已完成样本的均值。
 
@@ -210,19 +212,19 @@ Hall Call 动态改派只由新乘客、到层、上下客完成和零耗时状�
 | 验证项 | 结果 |
 | --- | --- |
 | 原 CoreSmokeTests | 406 项检查通过，未删除任何检查 |
-| Dispatcher | 82 个场景、439 项断言通过（含 108 组真实 LOOK 路线对照） |
+| Dispatcher | 83 个场景、444 项断言通过（含 108 组真实 LOOK 路线对照） |
 | Elevator（含撤销外呼及内呼保护） | 26 个场景、87 项断言通过 |
-| Simulation（含改派、随机、压力、所有权） | 38 个场景、2,096 项断言通过 |
-| 新增测试架构 | x64 与 x86 均通过，合计每个架构 146 场景 / 2,622 断言，另有各 406 项 Smoke |
+| Simulation（含改派、随机、压力、所有权） | 41 个场景、2,149 项断言通过 |
+| 新增测试架构 | x64 与 x86 均通过，合计每个架构 150 场景 / 2,680 断言，另有各 406 项 Smoke |
 | Debug x64 / Release x64 / Debug x86 / Release x86 全量重新生成 | 全部 0 警告、0 错误 |
 | 2,000 人有限批次 | 足够时长后全部送达，无活动 ID 或外呼遗留 |
 | 高客流：seed=321，λ=8，600 秒 | 生成 4,815，送达 3,422，等待 1,369，乘梯 24，人数守恒 |
 | 一小时：seed=987，λ=0.6 | 生成 2,186，送达 2,176，全部采样一致性检查通过 |
 | 固定任务对照 | 同向路线实际响应 10 秒，纯最近距离选择需 30 秒；不代表所有客流均优 |
 
-具体配置见 Tests/SimulationTests.cpp。本次边界修复验证日志位于 `build/verification/dispatch-boundaries/`，不提交生成文件；主 App、PCH、`.rc`、Resource.h、Dialog、UI 布局及 Statistics 本次均未修改。新增回归覆盖驶离同层、相邻远离、不可行 owner 绕过冷却、真正服务保护、双向移动中撤销且不改内呼/动作，以及 6/9 请求同事件多批分配和全不可行批次退出。
+具体配置见 Tests/SimulationTests.cpp。本次 Deferred 修复日志位于 `build/verification/deferred-capacity/`，不提交生成文件；核心只改 Simulation.cpp 的窗口预筛，既有 Dispatcher 评分、Elevator 状态机和公共接口均未修改。新增回归覆盖三个 Deferred 不占 Active 窗口、实际分配与三个 Active 的联合计划对照、FIFO/Aging 连续、路线撤销/顺序变化后恢复、Alighted 后正常服务及含 Deferred 的分帧一致性；原全不可行批次退出和 2000 人等测试继续保留。
 
-以下保留固定归属贪心 `0fade61` 与联合分配初版 `e7b96a6` 的历史对照，不是本轮三处边界修复的重新测量。两版使用相同 S/T、FIFO 注入、seed 和 MSVC `/O2 /MD`；`Tests/RunDispatchComparison.ps1 x64` 可在 build 内导出固定旧基线与当前源码重新对照，不切换分支。对照程序不加入 MFC 可执行文件。平均等待包含上梯 T：
+以下保留固定归属贪心 `0fade61` 与联合分配初版 `e7b96a6` 的历史对照，不是本轮 Deferred 修复的重新测量。两版使用相同 S/T、FIFO 注入、seed 和 MSVC `/O2 /MD`；`Tests/RunDispatchComparison.ps1 x64` 可在 build 内导出固定旧基线与当前源码重新对照，不切换分支。对照程序不加入 MFC 可执行文件。平均等待包含上梯 T：
 
 | 固定场景 | 原贪心固定归属均等候（秒） | 联合分配+动态改派均等候（秒） | 送达旧/新 |
 | --- | ---: | ---: | ---: |

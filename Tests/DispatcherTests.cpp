@@ -594,5 +594,20 @@ int main()
         tests.Check(dispatcher.PlanAssignments(calls,{Car(9,1),Car(2,1)},0).elevatorIndices[0]==1,"lower ID selected");
         tests.Check(dispatcher.PlanAssignments(calls,{Car(2,1),Car(9,1)},0).elevatorIndices[0]==0,"stable after permutation");
     });
+    tests.Run("hall cancellation restores deferred feasibility on fresh snapshot", [&] {
+        SimulationConfig config; config.capacity=1;
+        Elevator owner(0,1,config); owner.AddInternalTarget(20); owner.AddHallCall(5,Direction::Up);
+        auto before=owner.GetDispatchSnapshot();
+        for(auto& service:before.stopServices)
+            if(service.floor==5 && service.direction==Direction::Up) service.boardingTargetFloors={20};
+        const auto request=Call(10,Direction::Up,{15},42,7);
+        tests.Check(!dispatcher.ScoreSnapshot(10,Direction::Up,before,7,100).feasible,"known pickup consumes only seat");
+        tests.Check(owner.RemoveHallCall(5,Direction::Up),"route cancellation accepted");
+        const auto after=owner.GetDispatchSnapshot();
+        tests.Check(dispatcher.ScoreSnapshot(10,Direction::Up,after,7,100).feasible,"same feasibility restores eligibility");
+        const auto plan=dispatcher.PlanAssignments({request},{after},100);
+        tests.Check(plan.assignedCount==1 && plan.elevatorIndices[0]==0,"restored request participates normally");
+        tests.Check(request.firstPassengerId==42 && request.firstRequestTime==7,"request identity and aging input unchanged");
+    });
     return tests.Finish();
 }

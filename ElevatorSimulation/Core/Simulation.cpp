@@ -269,16 +269,31 @@ bool Simulation::DispatchCalls()
             return std::tie(left->second.firstRequestTime, left->second.firstPassengerId, left->first) <
                 std::tie(right->second.firstRequestTime, right->second.firstPassengerId, right->first);
         });
-        if (pending.size() > ElevatorDispatcher::MaxJointRequests)
-            pending.resize(ElevatorDispatcher::MaxJointRequests);
         if (pending.empty()) break;
+        const auto snapshots = BuildDispatchSnapshots();
+        std::vector<std::map<HallCallKey, HallCall>::iterator> active;
         std::vector<HallCallDispatchSnapshot> requests;
-        for (auto call : pending) requests.push_back(BuildHallCallSnapshot(call->first, call->second));
-        const auto plan = m_dispatcher.PlanAssignments(requests, BuildDispatchSnapshots(), m_currentTime);
-        if (plan.assignedCount == 0) break;
-        for (std::size_t index = 0; index < pending.size(); ++index)
+        for (auto call : pending)
         {
-            const auto call = pending[index];
+            auto request = BuildHallCallSnapshot(call->first, call->second);
+            const bool feasible = std::any_of(snapshots.begin(), snapshots.end(), [&](const auto& elevator)
+            {
+                return m_dispatcher.ScoreSnapshot(request.floor, request.direction, elevator,
+                    request.firstRequestTime, m_currentTime).feasible;
+            });
+            // 无候选时临时 DeferredCapacity：不占窗口，不改真实队列、时间或队头 ID。
+            // 每批用新快照重判，不缓存状态；容量/路线事件仍使用 m_dispatchDirty 触发。
+            if (!feasible) continue;
+            active.push_back(call);
+            requests.push_back(std::move(request));
+            if (active.size() == ElevatorDispatcher::MaxJointRequests) break;
+        }
+        if (active.empty()) break;
+        const auto plan = m_dispatcher.PlanAssignments(requests, snapshots, m_currentTime);
+        if (plan.assignedCount == 0) break;
+        for (std::size_t index = 0; index < active.size(); ++index)
+        {
+            const auto call = active[index];
             const auto [floor, direction] = call->first;
             const int id = plan.elevatorIndices[index];
             if (id != InvalidElevatorId)

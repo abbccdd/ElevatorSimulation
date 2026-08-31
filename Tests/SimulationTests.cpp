@@ -16,6 +16,43 @@ namespace
         return config;
     }
 
+    Simulation FullUpFleet()
+    {
+        auto config=Config(); config.floorCount=20; config.capacity=1; config.simulationDuration=300;
+        Simulation simulation; simulation.Initialize(config,42);
+        simulation.AddPassenger(20,1); simulation.Start(); simulation.Update(44);
+        simulation.AddPassenger(1,20); simulation.AddPassenger(1,20); simulation.AddPassenger(10,20);
+        simulation.Update(6.125); // 三台满载上行，唯一已知下客点均为 20F。
+        return simulation;
+    }
+
+    HallCallSnapshot HallAt(const Simulation& simulation, int floor, Direction direction)
+    {
+        for(const auto& call:simulation.GetHallCallSnapshots())
+            if(call.floorNumber==floor && call.direction==direction) return call;
+        throw std::runtime_error("expected hall call missing");
+    }
+
+    // 只重建 FullUpFleet 的已知单乘客直达路线，供独立的三请求规划作结果对照。
+    // 不访问 Simulation 私有成员，也不重写可行性/容量算法。
+    std::vector<ElevatorDispatchSnapshot> FullFleetSnapshots(const Simulation& simulation)
+    {
+        std::vector<ElevatorDispatchSnapshot> snapshots;
+        const auto people=simulation.GetPassengerSnapshots();
+        for(const auto& car:simulation.GetElevatorSnapshots())
+        {
+            const auto passenger=std::find_if(people.begin(),people.end(),[&](const auto& p) { return p.elevatorId==car.id; });
+            if(passenger==people.end() || car.state!=ElevatorState::MovingUp || car.passengerCount!=1)
+                throw std::runtime_error("full upward fixture changed");
+            ElevatorDispatchSnapshot snapshot; snapshot.elevator=car; snapshot.floorCount=20;
+            snapshot.betweenFloors=true; snapshot.upTasks={20}; snapshot.stopServices={{20,Direction::Idle,1,0}};
+            snapshot.remainingActionTime=2-(simulation.GetCurrentTime()-passenger->boardTime-
+                (car.currentFloor-passenger->startFloor)*2);
+            snapshots.push_back(std::move(snapshot));
+        }
+        return snapshots;
+    }
+
     void SameState(TestSuite& tests, const Simulation& a, const Simulation& b)
     {
         tests.Check(a.ValidateState() && b.ValidateState(), "both states valid");
@@ -376,6 +413,83 @@ int main()
         tests.Check(simulation.ValidateState(),"pending queues stay intact");
         simulation.Update(249.89);
         tests.Check(simulation.GetStatisticsSnapshot().arrivedCount==7 && simulation.ValidateState(),"later capacity release drains requests");
+    });
+    tests.Run("three deferred calls do not consume the active joint window", [&] {
+        auto simulation=FullUpFleet(); const double originalTime=simulation.GetCurrentTime();
+        for(int floor=12;floor<=14;++floor) simulation.AddPassenger(floor,20);
+        simulation.Update(0.125);
+        const auto snapshots=FullFleetSnapshots(simulation);
+        const ElevatorDispatcher dispatcher;
+        for(int floor=12;floor<=14;++floor)
+            for(const auto& car:snapshots)
+                tests.Check(!dispatcher.ScoreSnapshot(floor,Direction::Up,car).feasible,"oldest three have no candidate");
+        std::vector<HallCallDispatchSnapshot> active;
+        for(int floor=15;floor<=17;++floor)
+        {
+            const auto id=simulation.AddPassenger(floor,1);
+            active.push_back({floor,Direction::Down,simulation.GetCurrentTime(),id,1,{1}});
+        }
+        const auto expected=dispatcher.PlanAssignments(active,snapshots,simulation.GetCurrentTime());
+        tests.Check(active.size()==3 && expected.assignedCount==3,"full three-active-request joint plan exists");
+        simulation.Update(0.125); // 下次物理到层在 51 秒；本次只执行新增乘客触发的调度。
+        for(std::size_t index=0;index<active.size();++index)
+            tests.Check(HallAt(simulation,active[index].floor,Direction::Down).assignedElevatorId==expected.elevatorIndices[index],
+                "actual assignments match joint planning of all three active requests");
+        for(int floor=12;floor<=14;++floor)
+        {
+            const auto call=HallAt(simulation,floor,Direction::Up);
+            tests.Check(call.assignedElevatorId==InvalidElevatorId && call.waitingCount==1,"deferred call remains queued");
+            tests.Near(call.firstRequestTime,originalTime,"deferred timestamp retained");
+        }
+        tests.Check(simulation.GetHallCallSnapshots().size()==6 && simulation.ValidateState(),"six calls retain unique ownership");
+    });
+    tests.Run("deferred FIFO and aging survive route recovery and alighting", [&] {
+        auto simulation=FullUpFleet(); const double originalTime=simulation.GetCurrentTime();
+        const auto first=simulation.AddPassenger(12,20); simulation.Update(0.125);
+        const auto second=simulation.AddPassenger(12,20); simulation.Update(0.125);
+        const auto deferred=HallAt(simulation,12,Direction::Up);
+        tests.Check(deferred.assignedElevatorId==InvalidElevatorId && deferred.waitingCount==2,"both IDs stay deferred in FIFO");
+        tests.Near(deferred.firstRequestTime,originalTime,"later passenger does not reset head time");
+        for(int refresh=0;refresh<20;++refresh) simulation.GetHallCallSnapshots();
+        tests.Check(HallAt(simulation,12,Direction::Up).assignedElevatorId==InvalidElevatorId,"UI snapshot reads do not dispatch");
+        const auto arrivedBefore=simulation.GetStatisticsSnapshot().arrivedCount;
+        simulation.Update(0.625); // 51 秒已驶离 12F：20F 下客改为发生在折返接客之前。
+        const auto active=HallAt(simulation,12,Direction::Up);
+        tests.Check(active.assignedElevatorId==2 && simulation.GetStatisticsSnapshot().arrivedCount==arrivedBefore,
+            "route-order change reactivates request before actual unloading");
+        tests.Near(active.firstRequestTime,originalTime,"reactivation preserves first request time");
+        const ElevatorDispatcher dispatcher;
+        tests.Near(dispatcher.GetAgingBonus(active.firstRequestTime,simulation.GetCurrentTime()),
+            (51-originalTime)*ElevatorDispatcher::AgingBonusRate,"aging continues from original request");
+        // ETA 已预见下客，因此不能故意等到 Alighted 才允许分配；实际事件后归属仍须有效。
+        simulation.Update(69.875-simulation.GetCurrentTime());
+        tests.Check(simulation.GetElevatorSnapshots()[2].state==ElevatorState::Alighting,"immediately before alighting event");
+        const auto arrivals=simulation.GetStatisticsSnapshot().arrivedCount; simulation.Update(0.125);
+        tests.Check(simulation.GetStatisticsSnapshot().arrivedCount==arrivals+1,"Alighted releases actual capacity");
+        tests.Check(HallAt(simulation,12,Direction::Up).assignedElevatorId!=InvalidElevatorId && simulation.ValidateState(),
+            "previously deferred request remains serviceable after Alighted");
+        double firstBoard=UnsetTime, secondBoard=UnsetTime;
+        while(simulation.GetCurrentTime()<300 && secondBoard==UnsetTime)
+        {
+            simulation.Update(0.25);
+            for(const auto& passenger:simulation.GetPassengerSnapshots())
+            {
+                if(passenger.id==first && passenger.boardTime!=UnsetTime) firstBoard=passenger.boardTime;
+                if(passenger.id==second && passenger.boardTime!=UnsetTime) secondBoard=passenger.boardTime;
+            }
+        }
+        tests.Check(firstBoard>originalTime && secondBoard>firstBoard,"original head ID boards before newer passenger");
+        simulation.Update(300-simulation.GetCurrentTime());
+        tests.Check(simulation.GetStatisticsSnapshot().arrivedCount==6 && simulation.ValidateState(),"deferred passengers eventually delivered");
+    });
+    tests.Run("deferred active filtering is frame partition independent", [&] {
+        auto a=FullUpFleet(), b=FullUpFleet();
+        for(int floor=12;floor<=14;++floor) { a.AddPassenger(floor,20); b.AddPassenger(floor,20); }
+        a.Update(0.125); b.Update(0.125);
+        for(int floor=15;floor<=17;++floor) { a.AddPassenger(floor,1); b.AddPassenger(floor,1); }
+        a.Update(100);
+        for(int frame=0;frame<800;++frame) b.Update(0.125);
+        SameState(tests,a,b);
     });
     return tests.Finish();
 }
