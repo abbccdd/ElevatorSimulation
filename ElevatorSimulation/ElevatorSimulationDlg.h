@@ -1,12 +1,12 @@
-﻿
+
 // ElevatorSimulationDlg.h: 头文件
 //
 
 #pragma once
 
-#include "Core/Simulation.h"
+#include "Core/SimulationWorker.h"
 
-#include <chrono>
+#include <memory>
 
 
 // CElevatorSimulationDlg 对话框
@@ -15,6 +15,7 @@ class CElevatorSimulationDlg : public CDialogEx
 // 构造
 public:
 	CElevatorSimulationDlg(CWnd* pParent = nullptr);	// 标准构造函数
+	~CElevatorSimulationDlg() override;
 
 // 对话框数据
 #ifdef AFX_DESIGN_TIME
@@ -46,18 +47,16 @@ private:
 	static constexpr UINT_PTR SimulationTimerId = 1;
 	static constexpr UINT SimulationTimerIntervalMs = 33;
 
-	Simulation m_simulation;
+	std::unique_ptr<SimulationWorker> m_simulationWorker;
 	CListCtrl m_elevatorList;
 	CListCtrl m_floorList;
 	CListCtrl m_hallCallList;
-	std::chrono::steady_clock::time_point m_lastWallClock;
 
 	void InitializeListControls();
-	void ResetWallClock();
 	bool ReadConfiguration(SimulationConfig& config, std::uint32_t& seed);
 	bool ReadIntControl(int controlId, const wchar_t* fieldName, int& value);
 	bool ReadDoubleControl(int controlId, const wchar_t* fieldName, double& value);
 	void ShowInputError(const CString& message);
-	void UpdateControlStates();
+	void UpdateControlStates(const std::shared_ptr<const SimulationUISnapshot>& snapshot);
 	void RefreshSimulationView();
 };

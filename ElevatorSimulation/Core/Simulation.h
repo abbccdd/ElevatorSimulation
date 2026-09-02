@@ -36,12 +36,18 @@ public:
     SimulationState GetState() const noexcept { return m_state; }
     double GetCurrentTime() const noexcept { return m_currentTime; }
     SimulationConfig GetConfig() const { return m_config; }
+    void SetDispatcherExecutionMode(DispatcherExecutionMode mode, std::size_t workerCount = 0)
+    { m_dispatcher.SetExecutionMode(mode, workerCount); }
+    DispatcherExecutionMode GetDispatcherExecutionMode() const noexcept
+    { return m_dispatcher.GetExecutionMode(); }
+    std::size_t GetDispatcherWorkerCount() const noexcept { return m_dispatcher.GetWorkerCount(); }
 
     std::vector<ElevatorSnapshot> GetElevatorSnapshots() const;
     std::vector<FloorSnapshot> GetFloorSnapshots() const;
     StatisticsSnapshot GetStatisticsSnapshot() const;
     std::vector<PassengerSnapshot> GetPassengerSnapshots() const;
     std::vector<HallCallSnapshot> GetHallCallSnapshots() const;
+    SimulationUISnapshot GetUISnapshot(bool workerActive = false) const;
     // 手工注入便于测试/演示，生成时间为当前仿真时间；失败返回 -1。
     PassengerId AddPassenger(int startFloor, int targetFloor);
     // 只读一致性诊断：所有权、人数守恒、楼层/方向、外呼唯一归属。
