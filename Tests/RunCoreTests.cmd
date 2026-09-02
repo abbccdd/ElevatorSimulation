@@ -13,10 +13,10 @@ if errorlevel 1 exit /b 2
 if not exist "%~dp0..\build\core-tests\%TEST_ARCH%" mkdir "%~dp0..\build\core-tests\%TEST_ARCH%"
 pushd "%~dp0..\build\core-tests\%TEST_ARCH%"
 if errorlevel 1 exit /b 2
-set "TEST_SUITES=Dispatcher Elevator Simulation"
+set "TEST_SUITES=Dispatcher Elevator Simulation Floor"
 if not "%~1"=="" if /i not "%~1"=="All" (
     set "TEST_SUITES="
-    for %%s in (Dispatcher Elevator Simulation) do if /i "%~1"=="%%s" set "TEST_SUITES=%%s"
+    for %%s in (Dispatcher Elevator Simulation Floor) do if /i "%~1"=="%%s" set "TEST_SUITES=%%s"
 )
 if not defined TEST_SUITES (popd & exit /b 2)
 for %%s in (%TEST_SUITES%) do (
