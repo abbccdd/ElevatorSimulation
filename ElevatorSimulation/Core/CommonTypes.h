@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <string>
 #include <vector>
 
 // 唯一公共契约：核心、统计和 UI 必须共用这些定义。
@@ -37,6 +38,12 @@ enum class SimulationState
     Running,
     Paused,
     Finished
+};
+
+enum class DispatcherExecutionMode
+{
+    Sequential,
+    Parallel
 };
 
 using PassengerId = int;
@@ -199,4 +206,22 @@ struct StatisticsSnapshot
     double maxWaitingTime = 0.0;
     double averageRideTime = 0.0;
     std::vector<ElevatorStatisticsSnapshot> elevators;
+};
+
+// UI 只读取这一份按值构造的完整视图，不接触 Simulation 的可写状态。
+struct SimulationUISnapshot
+{
+    SimulationState state = SimulationState::Uninitialized;
+    DispatcherExecutionMode dispatcherMode = DispatcherExecutionMode::Sequential;
+    std::size_t dispatcherWorkerCount = 0;
+    bool workerActive = false;
+    double currentTime = 0.0;
+    std::uint32_t randomSeed = 0;
+    SimulationConfig config;
+    std::string lastError;
+    std::vector<ElevatorSnapshot> elevators;
+    std::vector<FloorSnapshot> floors;
+    StatisticsSnapshot statistics;
+    std::vector<PassengerSnapshot> passengers;
+    std::vector<HallCallSnapshot> hallCalls;
 };
