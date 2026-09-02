@@ -27,6 +27,35 @@
 #define IDC_LIST_FLOORS                 1031
 #define IDC_LIST_HALL_CALLS             1032
 #define IDC_STATISTICS                  1040
+#define IDC_HEADER_TITLE                1041
+#define IDC_HEADER_STATE_LABEL          1042
+#define IDC_HEADER_TIME_LABEL           1043
+#define IDC_HEADER_SPEED_LABEL          1044
+#define IDC_HEADER_SPEED                1045
+#define IDC_PANEL_LEFT                  1046
+#define IDC_PANEL_MAIN                  1047
+#define IDC_PANEL_RIGHT                 1048
+#define IDC_BUTTON_PANEL_TOGGLE         1049
+#define IDC_TAB_PAGES                   1050
+#define IDC_PAGE_PLACEHOLDER            1051
+#define IDC_MAIN_FLOOR_LABEL            1052
+#define IDC_MAIN_ELEVATOR_LABEL         1053
+#define IDC_RIGHT_HINT                  1054
+#define IDC_SECTION_PARAMETERS          1055
+#define IDC_SECTION_CONTROLS            1056
+#define IDC_SECTION_SPEED               1057
+#define IDC_BUTTON_SPEED_1              1060
+#define IDC_BUTTON_SPEED_2              1061
+#define IDC_BUTTON_SPEED_5              1062
+#define IDC_BUTTON_SPEED_10             1063
+#define IDC_PARAMETER_LABEL_FIRST       1070
+#define IDC_PARAMETER_LABEL_LAST        1078
+#define IDC_STAT_CARD_FIRST             1080
+#define IDC_STAT_CARD_LAST              1085
+#define IDC_STAT_TITLE_FIRST            1090
+#define IDC_STAT_TITLE_LAST             1095
+#define IDC_STAT_VALUE_FIRST            1100
+#define IDC_STAT_VALUE_LAST             1105
 
 // 新对象的下一组默认值
 //
@@ -34,7 +63,7 @@
 #ifndef APSTUDIO_READONLY_SYMBOLS
 
 #define _APS_NEXT_RESOURCE_VALUE	129
-#define _APS_NEXT_CONTROL_VALUE		1041
+#define _APS_NEXT_CONTROL_VALUE		1106
 #define _APS_NEXT_SYMED_VALUE		101
 #define _APS_NEXT_COMMAND_VALUE		32771
 #endif
