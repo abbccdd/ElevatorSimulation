@@ -150,7 +150,7 @@ Update 在下一个乘客到达、任意电梯动作完成、当前帧目标时�
 | B | Core/Elevator.* | 已实现方向保持、顺路停靠、S/T 计时、容量及上下客 |
 | C | Core/Dispatcher.* | 统一 Cost/ETA 与 LOOK 预演；有限联合分配、滞回改派决策、稳定 tie-break |
 | D | Core/Simulation.* | 已集成种子、Poisson 到达、手工注入、唯一外呼归属、事件推进和清理 |
-| E | ElevatorSimulationDlg.* 与必要资源 | 仍待正式参数输入、开始/暂停/继续/重置、倍速、动态刷新与动画 |
+| E | ElevatorSimulationDlg.* 与必要资源 | 已完成初步参数输入、运行控制、倍速、Timer 与 Snapshot 动态列表；正式动画和视觉优化后续再做 |
 | F | Statistics/*、Tests/* | 已接入事件统计、回归及压力测试；后续扩展算法对照场景和展示 |
 
 Dispatcher 无副作用。当前满载梯若预测在请求层接客前释放容量，可以参与候选；若到请求层完成下客后仍满载，则不分配。无合理候选返回 -1。Elevator 只执行已接受任务，不自行寻找整栋楼的乘客。当前方向前方的内呼及双向外呼全部处理至可折返位置后才能反向；仅内呼和同向外呼触发停站服务。满载未上梯乘客继续留队，外呼解除旧归属并重试，不丢弃剩余请求。
@@ -236,6 +236,17 @@ Hall Call 动态改派只由新乘客、到层、上下客完成和零耗时状�
 
 历史对照的高客流等待队列旧/新为 1413/1383，乘梯中为 21/14；两版已上梯样本不同，不能只比较均值。90 人场景略有退化。联合分配初版增加了计算量：本机 x64 优化编译、每场景 3 次平均，2000 人约 54→356 ms，高客流约 91→4044 ms（不含编译）；不是所有客流都更快或等待更短。完整配置、成本反例、搜索开销及局限见 docs/AlgorithmDesign.md。
 
+## MFC UI 初步集成
+
+当前主对话框已经打通“输入参数 → Start → 实时运行与显示 → Pause/Resume → Finished → Reset”的最小完整链路，界面保持原生 MFC 风格，暂不包含主题、自绘、图片或复杂动画。
+
+- 参数区提供楼层数 L、电梯数 N、容量 K、每层运行时间 S、每人上下客时间 T、总时长、全楼乘客产生率、仿真倍速与固定 seed。UI 只做严格的字符串/数值转换，参数范围和 N 为 3 的正倍数等规则仍由 `Simulation::Initialize` 统一校验，失败时显示 `GetLastError()`。
+- 控制区提供开始、暂停、继续和重置。按钮及参数编辑框随 `Ready`、`Running`、`Paused`、`Finished` 状态启用或禁用；Finished 保留最终快照，必须 Reset 后才能开始下一轮。
+- 对话框使用 33 ms MFC Timer 和 `std::chrono::steady_clock` 采样真实经过时间。Timer 仅在 Running 时调用 `Simulation::Update(realDelta)`，不在 UI 再乘 `simulationSpeed`。Start、Pause、Resume、Reset 都会重设墙钟基准，因此暂停期间的真实时间不会在恢复后的第一帧注入核心。
+- 每次刷新只读取 `GetElevatorSnapshots()`、`GetFloorSnapshots()`、`GetHallCallSnapshots()` 和 `GetStatisticsSnapshot()` 的值副本。电梯列表显示 E1~EN、真实楼层、方向、动作状态和载客量；楼层列表按高层到低层显示上下行等待；Hall Call 列表显示等待人数和归属；统计区显示模型时间、生成/等待/乘梯/到达人数及平均等待、平均乘梯、最大等待。
+- Reset 调用核心 `Simulation::Reset()`，沿用最近成功配置和 seed，清空模型时间、乘客、楼层队列和统计并回到 Ready。Ready 状态再次 Start 时会从当前输入框重新 Initialize，因此用户修改参数后不会误用旧配置。
+- 当前 `HallCallSnapshot` 只能表达 assigned/unassigned，不能区分临时 `DeferredCapacity`。界面暂将其显示为“未分配”，灰色 Deferred 展示保留为 TODO；不为此增加第二套容量判断或扩展核心接口。
+
 ## 使用核心与下一步
 
 ```cpp
@@ -253,4 +264,4 @@ if (simulation.Initialize(config, 42))
 
 测试可设置 passengerRate=0，通过 AddPassenger 注入确定的请求；RunCoreTests.cmd 可指定 Dispatcher、Elevator、Simulation 或 All，第二个参数为 x64/x86。新增测试源在 VS 中作为 Development 文件显示，不加入 MFC 可执行文件，以免产生第二个 main。
 
-下一步优先由 E 对接现有控制与 Snapshot 接口，完成实际可操作的 MFC 演示。UI 只负责输入、真实时间采样和显示；恢复后重设采样基点，避免把暂停时间算进下一帧。当前无独立开关门时间、加减速、分区停车、峰值预测或全局最优保证；这些是明确的课程设计简化，不是已经实现的高级群控。
+下一步可在不改变 UI/核心边界的前提下完善窗口缩放、视觉样式、Deferred 专门标识和正式动画。当前无独立开关门时间、加减速、分区停车、峰值预测或全局最优保证；这些是明确的课程设计简化，不是已经实现的高级群控。

@@ -8,9 +8,65 @@
 #include "ElevatorSimulationDlg.h"
 #include "afxdialogex.h"
 
+#include <cerrno>
+#include <cmath>
+#include <cwchar>
+#include <limits>
+
 #ifdef _DEBUG
 #define new DEBUG_NEW
 #endif
+
+namespace
+{
+	const wchar_t* DirectionText(Direction direction)
+	{
+		switch (direction)
+		{
+		case Direction::Up: return L"↑";
+		case Direction::Down: return L"↓";
+		default: return L"-";
+		}
+	}
+
+	const wchar_t* ElevatorStateText(ElevatorState state)
+	{
+		switch (state)
+		{
+		case ElevatorState::MovingUp: return L"向上移动";
+		case ElevatorState::MovingDown: return L"向下移动";
+		case ElevatorState::Boarding: return L"上客";
+		case ElevatorState::Alighting: return L"下客";
+		case ElevatorState::Stopped: return L"停站";
+		default: return L"空闲";
+		}
+	}
+
+	const wchar_t* SimulationStateText(SimulationState state)
+	{
+		switch (state)
+		{
+		case SimulationState::Ready: return L"Ready / 就绪";
+		case SimulationState::Running: return L"Running / 运行中";
+		case SimulationState::Paused: return L"Paused / 已暂停";
+		case SimulationState::Finished: return L"Finished / 已结束";
+		default: return L"Error / 未初始化";
+		}
+	}
+
+	CString Utf8ToCString(const std::string& text)
+	{
+		if (text.empty()) return CString();
+		const int length = MultiByteToWideChar(CP_UTF8, 0, text.c_str(),
+			static_cast<int>(text.size()), nullptr, 0);
+		if (length <= 0) return CString(L"未知错误");
+		CString result;
+		wchar_t* buffer = result.GetBuffer(length);
+		MultiByteToWideChar(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), buffer, length);
+		result.ReleaseBuffer(length);
+		return result;
+	}
+}
 
 
 // 用于应用程序“关于”菜单项的 CAboutDlg 对话框
@@ -59,12 +115,21 @@ CElevatorSimulationDlg::CElevatorSimulationDlg(CWnd* pParent /*=nullptr*/)
 void CElevatorSimulationDlg::DoDataExchange(CDataExchange* pDX)
 {
 	CDialogEx::DoDataExchange(pDX);
+	DDX_Control(pDX, IDC_LIST_ELEVATORS, m_elevatorList);
+	DDX_Control(pDX, IDC_LIST_FLOORS, m_floorList);
+	DDX_Control(pDX, IDC_LIST_HALL_CALLS, m_hallCallList);
 }
 
 BEGIN_MESSAGE_MAP(CElevatorSimulationDlg, CDialogEx)
 	ON_WM_SYSCOMMAND()
 	ON_WM_PAINT()
 	ON_WM_QUERYDRAGICON()
+	ON_WM_TIMER()
+	ON_WM_DESTROY()
+	ON_BN_CLICKED(IDC_BUTTON_START, &CElevatorSimulationDlg::OnBnClickedStart)
+	ON_BN_CLICKED(IDC_BUTTON_PAUSE, &CElevatorSimulationDlg::OnBnClickedPause)
+	ON_BN_CLICKED(IDC_BUTTON_RESUME, &CElevatorSimulationDlg::OnBnClickedResume)
+	ON_BN_CLICKED(IDC_BUTTON_RESET, &CElevatorSimulationDlg::OnBnClickedReset)
 END_MESSAGE_MAP()
 
 
@@ -99,20 +164,155 @@ BOOL CElevatorSimulationDlg::OnInitDialog()
 	SetIcon(m_hIcon, TRUE);			// 设置大图标
 	SetIcon(m_hIcon, FALSE);		// 设置小图标
 
-	SetWindowTextW(L"多电梯群控调度仿真系统 - 核心已就绪");
-	if (!m_simulation.Initialize(SimulationConfig{}))
+	SetWindowTextW(L"多电梯群控调度仿真系统");
+	InitializeListControls();
+	SetDlgItemTextW(IDC_EDIT_FLOOR_COUNT, L"20");
+	SetDlgItemTextW(IDC_EDIT_ELEVATOR_COUNT, L"6");
+	SetDlgItemTextW(IDC_EDIT_CAPACITY, L"10");
+	SetDlgItemTextW(IDC_EDIT_MOVE_TIME, L"2.0");
+	SetDlgItemTextW(IDC_EDIT_PERSON_TIME, L"1.0");
+	SetDlgItemTextW(IDC_EDIT_DURATION, L"300");
+	SetDlgItemTextW(IDC_EDIT_PASSENGER_RATE, L"0.2");
+	SetDlgItemTextW(IDC_EDIT_SPEED, L"1");
+	SetDlgItemTextW(IDC_EDIT_SEED, L"42");
+
+	SimulationConfig config;
+	config.capacity = 10;
+	config.personTime = 1.0;
+	config.simulationDuration = 300.0;
+	if (!m_simulation.Initialize(config, 42))
 	{
-		AfxMessageBox(L"默认参数初始化失败，请检查 Simulation::GetLastError()。", MB_ICONERROR);
-		SetDlgItemTextW(IDC_SIMULATION_STATUS, L"初始化失败。");
+		CString error = L"默认参数初始化失败：" + Utf8ToCString(m_simulation.GetLastError());
+		AfxMessageBox(error, MB_ICONERROR);
 	}
-	else
+	ResetWallClock();
+	if (SetTimer(SimulationTimerId, SimulationTimerIntervalMs, nullptr) == 0)
 	{
-		RefreshSimulationView();
+		AfxMessageBox(L"无法创建 UI 刷新计时器，仿真不会自动推进。", MB_ICONERROR);
 	}
-	// TODO(E): 后续添加参数输入、开始/暂停/继续/重置按钮与定时刷新。
-	// UI 只调用 Simulation 控制接口并显示快照，不自行实现仿真算法。
+	RefreshSimulationView();
 
 	return TRUE;  // 除非将焦点设置到控件，否则返回 TRUE
+}
+
+void CElevatorSimulationDlg::InitializeListControls()
+{
+	const DWORD extendedStyle = LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES | LVS_EX_DOUBLEBUFFER;
+	m_elevatorList.SetExtendedStyle(m_elevatorList.GetExtendedStyle() | extendedStyle);
+	m_floorList.SetExtendedStyle(m_floorList.GetExtendedStyle() | extendedStyle);
+	m_hallCallList.SetExtendedStyle(m_hallCallList.GetExtendedStyle() | extendedStyle);
+
+	m_elevatorList.InsertColumn(0, L"电梯", LVCFMT_LEFT, 52);
+	m_elevatorList.InsertColumn(1, L"楼层", LVCFMT_RIGHT, 58);
+	m_elevatorList.InsertColumn(2, L"方向", LVCFMT_CENTER, 52);
+	m_elevatorList.InsertColumn(3, L"状态", LVCFMT_LEFT, 92);
+	m_elevatorList.InsertColumn(4, L"载客", LVCFMT_RIGHT, 72);
+
+	m_floorList.InsertColumn(0, L"楼层", LVCFMT_RIGHT, 62);
+	m_floorList.InsertColumn(1, L"上行等待", LVCFMT_RIGHT, 82);
+	m_floorList.InsertColumn(2, L"下行等待", LVCFMT_RIGHT, 82);
+
+	m_hallCallList.InsertColumn(0, L"楼层", LVCFMT_RIGHT, 58);
+	m_hallCallList.InsertColumn(1, L"方向", LVCFMT_CENTER, 52);
+	m_hallCallList.InsertColumn(2, L"等待", LVCFMT_RIGHT, 65);
+	m_hallCallList.InsertColumn(3, L"归属", LVCFMT_LEFT, 88);
+}
+
+void CElevatorSimulationDlg::ResetWallClock()
+{
+	m_lastWallClock = std::chrono::steady_clock::now();
+}
+
+bool CElevatorSimulationDlg::ReadIntControl(int controlId, const wchar_t* fieldName, int& value)
+{
+	CString text;
+	GetDlgItemTextW(controlId, text);
+	text.Trim();
+	errno = 0;
+	wchar_t* end = nullptr;
+	const long parsed = std::wcstol(text.GetString(), &end, 10);
+	if (text.IsEmpty() || end == text.GetString() || *end != L'\0' || errno == ERANGE ||
+		parsed < (std::numeric_limits<int>::min)() || parsed > (std::numeric_limits<int>::max)())
+	{
+		CString message;
+		message.Format(L"%s 必须是有效整数。", fieldName);
+		ShowInputError(message);
+		return false;
+	}
+	value = static_cast<int>(parsed);
+	return true;
+}
+
+bool CElevatorSimulationDlg::ReadDoubleControl(int controlId, const wchar_t* fieldName, double& value)
+{
+	CString text;
+	GetDlgItemTextW(controlId, text);
+	text.Trim();
+	errno = 0;
+	wchar_t* end = nullptr;
+	const double parsed = std::wcstod(text.GetString(), &end);
+	if (text.IsEmpty() || end == text.GetString() || *end != L'\0' || errno == ERANGE)
+	{
+		CString message;
+		message.Format(L"%s 必须是有效数字。", fieldName);
+		ShowInputError(message);
+		return false;
+	}
+	value = parsed;
+	return true;
+}
+
+bool CElevatorSimulationDlg::ReadConfiguration(SimulationConfig& config, std::uint32_t& seed)
+{
+	if (!ReadIntControl(IDC_EDIT_FLOOR_COUNT, L"楼层数 L", config.floorCount) ||
+		!ReadIntControl(IDC_EDIT_ELEVATOR_COUNT, L"电梯数 N", config.elevatorCount) ||
+		!ReadIntControl(IDC_EDIT_CAPACITY, L"容量 K", config.capacity) ||
+		!ReadDoubleControl(IDC_EDIT_MOVE_TIME, L"每层运行时间 S", config.moveTimePerFloor) ||
+		!ReadDoubleControl(IDC_EDIT_PERSON_TIME, L"每人上下客时间 T", config.personTime) ||
+		!ReadDoubleControl(IDC_EDIT_DURATION, L"仿真总时长", config.simulationDuration) ||
+		!ReadDoubleControl(IDC_EDIT_PASSENGER_RATE, L"乘客产生率", config.passengerRate) ||
+		!ReadDoubleControl(IDC_EDIT_SPEED, L"仿真倍速", config.simulationSpeed))
+	{
+		return false;
+	}
+
+	CString seedText;
+	GetDlgItemTextW(IDC_EDIT_SEED, seedText);
+	seedText.Trim();
+	errno = 0;
+	wchar_t* end = nullptr;
+	const unsigned long long parsedSeed = std::wcstoull(seedText.GetString(), &end, 10);
+	if (seedText.IsEmpty() || end == seedText.GetString() || *end != L'\0' || errno == ERANGE ||
+		parsedSeed > (std::numeric_limits<std::uint32_t>::max)())
+	{
+		ShowInputError(L"随机种子 seed 必须是 0~4294967295 的整数。");
+		return false;
+	}
+	seed = static_cast<std::uint32_t>(parsedSeed);
+	return true;
+}
+
+void CElevatorSimulationDlg::ShowInputError(const CString& message)
+{
+	SetDlgItemTextW(IDC_SIMULATION_STATE, L"Error / 参数无效");
+	AfxMessageBox(message, MB_ICONWARNING);
+}
+
+void CElevatorSimulationDlg::UpdateControlStates()
+{
+	const SimulationState state = m_simulation.GetState();
+	const bool ready = state == SimulationState::Ready || state == SimulationState::Uninitialized;
+	GetDlgItem(IDC_BUTTON_START)->EnableWindow(ready);
+	GetDlgItem(IDC_BUTTON_PAUSE)->EnableWindow(state == SimulationState::Running);
+	GetDlgItem(IDC_BUTTON_RESUME)->EnableWindow(state == SimulationState::Paused);
+	GetDlgItem(IDC_BUTTON_RESET)->EnableWindow(state != SimulationState::Uninitialized);
+
+	for (int controlId : { IDC_EDIT_FLOOR_COUNT, IDC_EDIT_ELEVATOR_COUNT, IDC_EDIT_CAPACITY,
+		IDC_EDIT_MOVE_TIME, IDC_EDIT_PERSON_TIME, IDC_EDIT_DURATION, IDC_EDIT_PASSENGER_RATE,
+		IDC_EDIT_SPEED, IDC_EDIT_SEED })
+	{
+		GetDlgItem(controlId)->EnableWindow(ready);
+	}
 }
 
 void CElevatorSimulationDlg::RefreshSimulationView()
@@ -120,25 +320,154 @@ void CElevatorSimulationDlg::RefreshSimulationView()
 	const auto elevators = m_simulation.GetElevatorSnapshots();
 	const auto floors = m_simulation.GetFloorSnapshots();
 	const auto statistics = m_simulation.GetStatisticsSnapshot();
-	CString text;
-	text.Format(L"核心已初始化（尚未开始仿真）\r\n"
-		L"楼层：%zu  电梯：%zu  仿真时间：%.1f 秒\r\n\r\n",
-		floors.size(), elevators.size(), m_simulation.GetCurrentTime());
-	for (const auto& elevator : elevators)
+	const auto hallCalls = m_simulation.GetHallCallSnapshots();
+	const SimulationConfig config = m_simulation.GetConfig();
+	SetDlgItemTextW(IDC_SIMULATION_STATE, SimulationStateText(m_simulation.GetState()));
+	CString modelTime;
+	modelTime.Format(L"Model Time: %.1f / %.1f s", m_simulation.GetCurrentTime(), config.simulationDuration);
+	SetDlgItemTextW(IDC_MODEL_TIME, modelTime);
+
+	if (m_elevatorList.GetItemCount() != static_cast<int>(elevators.size()))
 	{
-		CString line;
-		// 当前视图仅展示初始化快照，初始状态统一为 Idle。
-		line.Format(L"E%d    %d 层    %d/%d 人    停止\r\n",
-			elevator.id + 1, elevator.currentFloor,
-			elevator.passengerCount, elevator.capacity);
-		text += line;
+		m_elevatorList.DeleteAllItems();
+		for (std::size_t index = 0; index < elevators.size(); ++index)
+			m_elevatorList.InsertItem(static_cast<int>(index), L"");
 	}
-	CString footer;
-	footer.Format(L"\r\n等待：%zu  乘梯：%zu  已到达：%zu\r\n"
-		L"动态视图、参数输入及控制按钮：待 UI 模块完善。",
-		statistics.waitingCount, statistics.ridingCount, statistics.arrivedCount);
-	text += footer;
-	SetDlgItemTextW(IDC_SIMULATION_STATUS, text);
+	for (std::size_t index = 0; index < elevators.size(); ++index)
+	{
+		const auto& elevator = elevators[index];
+		const int row = static_cast<int>(index);
+		CString value;
+		value.Format(L"E%d", elevator.id + 1);
+		m_elevatorList.SetItemText(row, 0, value);
+		value.Format(L"%dF", elevator.currentFloor);
+		m_elevatorList.SetItemText(row, 1, value);
+		m_elevatorList.SetItemText(row, 2, DirectionText(elevator.direction));
+		m_elevatorList.SetItemText(row, 3, ElevatorStateText(elevator.state));
+		value.Format(L"%d / %d", elevator.passengerCount, elevator.capacity);
+		m_elevatorList.SetItemText(row, 4, value);
+	}
+
+	if (m_floorList.GetItemCount() != static_cast<int>(floors.size()))
+	{
+		m_floorList.DeleteAllItems();
+		for (std::size_t index = 0; index < floors.size(); ++index)
+			m_floorList.InsertItem(static_cast<int>(index), L"");
+	}
+	for (std::size_t index = 0; index < floors.size(); ++index)
+	{
+		const auto& floor = floors[floors.size() - 1 - index];
+		const int row = static_cast<int>(index);
+		CString value;
+		value.Format(L"%dF", floor.floorNumber);
+		m_floorList.SetItemText(row, 0, value);
+		value.Format(L"%zu", floor.upWaitingCount);
+		m_floorList.SetItemText(row, 1, value);
+		value.Format(L"%zu", floor.downWaitingCount);
+		m_floorList.SetItemText(row, 2, value);
+	}
+
+	m_hallCallList.SetRedraw(FALSE);
+	m_hallCallList.DeleteAllItems();
+	for (std::size_t index = 0; index < hallCalls.size(); ++index)
+	{
+		const auto& call = hallCalls[index];
+		const int row = static_cast<int>(index);
+		CString value;
+		value.Format(L"%dF", call.floorNumber);
+		m_hallCallList.InsertItem(row, value);
+		m_hallCallList.SetItemText(row, 1, DirectionText(call.direction));
+		value.Format(L"%zu", call.waitingCount);
+		m_hallCallList.SetItemText(row, 2, value);
+		if (call.assignedElevatorId == InvalidElevatorId)
+			value = L"未分配";
+		else
+			value.Format(L"E%d", call.assignedElevatorId + 1);
+		m_hallCallList.SetItemText(row, 3, value);
+	}
+	m_hallCallList.SetRedraw(TRUE);
+	m_hallCallList.Invalidate(FALSE);
+
+	CString summary;
+	summary.Format(L"生成: %zu    等待: %zu    乘梯: %zu    到达: %zu    "
+		L"平均等待: %.2f s    平均乘梯: %.2f s    最大等待: %.2f s",
+		statistics.totalPassengerCount, statistics.waitingCount, statistics.ridingCount,
+		statistics.arrivedCount, statistics.averageWaitingTime, statistics.averageRideTime,
+		statistics.maxWaitingTime);
+	SetDlgItemTextW(IDC_STATISTICS, summary);
+	UpdateControlStates();
+}
+
+void CElevatorSimulationDlg::OnBnClickedStart()
+{
+	SimulationConfig config;
+	std::uint32_t seed = 0;
+	if (!ReadConfiguration(config, seed)) return;
+	if (!m_simulation.Initialize(config, seed))
+	{
+		ShowInputError(L"初始化失败：" + Utf8ToCString(m_simulation.GetLastError()));
+		return;
+	}
+	m_simulation.Start();
+	ResetWallClock();
+	RefreshSimulationView();
+}
+
+void CElevatorSimulationDlg::OnBnClickedPause()
+{
+	m_simulation.Pause();
+	ResetWallClock();
+	RefreshSimulationView();
+}
+
+void CElevatorSimulationDlg::OnBnClickedResume()
+{
+	m_simulation.Resume();
+	ResetWallClock();
+	RefreshSimulationView();
+}
+
+void CElevatorSimulationDlg::OnBnClickedReset()
+{
+	m_simulation.Reset();
+	if (m_simulation.GetState() != SimulationState::Ready)
+	{
+		// Reset 分配失败时核心保留旧状态；先暂停，避免错误提示停留时间进入下一帧。
+		m_simulation.Pause();
+		ShowInputError(L"重置失败：" + Utf8ToCString(m_simulation.GetLastError()));
+	}
+	ResetWallClock();
+	RefreshSimulationView();
+}
+
+void CElevatorSimulationDlg::OnTimer(UINT_PTR nIDEvent)
+{
+	if (nIDEvent == SimulationTimerId)
+	{
+		const auto now = std::chrono::steady_clock::now();
+		const double realDelta = std::chrono::duration<double>(now - m_lastWallClock).count();
+		m_lastWallClock = now;
+		if (m_simulation.IsRunning())
+		{
+			try
+			{
+				m_simulation.Update(realDelta);
+			}
+			catch (const std::exception& error)
+			{
+				m_simulation.Pause();
+				AfxMessageBox(L"仿真运行失败：" + Utf8ToCString(error.what()), MB_ICONERROR);
+			}
+		}
+		RefreshSimulationView();
+	}
+	CDialogEx::OnTimer(nIDEvent);
+}
+
+void CElevatorSimulationDlg::OnDestroy()
+{
+	KillTimer(SimulationTimerId);
+	CDialogEx::OnDestroy();
 }
 
 void CElevatorSimulationDlg::OnSysCommand(UINT nID, LPARAM lParam)

@@ -6,6 +6,8 @@
 
 #include "Core/Simulation.h"
 
+#include <chrono>
+
 
 // CElevatorSimulationDlg 对话框
 class CElevatorSimulationDlg : public CDialogEx
@@ -32,9 +34,30 @@ protected:
 	afx_msg void OnSysCommand(UINT nID, LPARAM lParam);
 	afx_msg void OnPaint();
 	afx_msg HCURSOR OnQueryDragIcon();
+	afx_msg void OnTimer(UINT_PTR nIDEvent);
+	afx_msg void OnDestroy();
+	afx_msg void OnBnClickedStart();
+	afx_msg void OnBnClickedPause();
+	afx_msg void OnBnClickedResume();
+	afx_msg void OnBnClickedReset();
 	DECLARE_MESSAGE_MAP()
 
 private:
+	static constexpr UINT_PTR SimulationTimerId = 1;
+	static constexpr UINT SimulationTimerIntervalMs = 33;
+
 	Simulation m_simulation;
+	CListCtrl m_elevatorList;
+	CListCtrl m_floorList;
+	CListCtrl m_hallCallList;
+	std::chrono::steady_clock::time_point m_lastWallClock;
+
+	void InitializeListControls();
+	void ResetWallClock();
+	bool ReadConfiguration(SimulationConfig& config, std::uint32_t& seed);
+	bool ReadIntControl(int controlId, const wchar_t* fieldName, int& value);
+	bool ReadDoubleControl(int controlId, const wchar_t* fieldName, double& value);
+	void ShowInputError(const CString& message);
+	void UpdateControlStates();
 	void RefreshSimulationView();
 };
