@@ -112,6 +112,11 @@ CElevatorSimulationDlg::CElevatorSimulationDlg(CWnd* pParent /*=nullptr*/)
 	m_hIcon = AfxGetApp()->LoadIcon(IDR_MAINFRAME);
 }
 
+CElevatorSimulationDlg::~CElevatorSimulationDlg()
+{
+	if (m_simulationWorker) m_simulationWorker->Stop();
+}
+
 void CElevatorSimulationDlg::DoDataExchange(CDataExchange* pDX)
 {
 	CDialogEx::DoDataExchange(pDX);
