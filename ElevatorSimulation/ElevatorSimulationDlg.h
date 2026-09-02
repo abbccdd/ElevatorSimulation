@@ -51,6 +51,8 @@ protected:
 	afx_msg void OnBnClickedSpeed10();
 	afx_msg void OnBnClickedPanelToggle();
 	afx_msg void OnTcnSelchangePages(NMHDR* pNMHDR, LRESULT* pResult);
+	afx_msg void OnTcnSelchangeRightTabs(NMHDR* pNMHDR, LRESULT* pResult);
+	afx_msg LRESULT OnElevatorSelectionChanged(WPARAM wParam, LPARAM lParam);
 	DECLARE_MESSAGE_MAP()
 
 private:
@@ -75,8 +77,11 @@ private:
 	CButton m_panelToggle;
 	ElevatorBuildingView m_buildingView;
 	CTabCtrl m_pageTabs;
+	CTabCtrl m_rightTabs;
 	CStatic m_pagePlaceholder;
-	CStatic m_rightHint;
+	CStatic m_elevatorDetailTitle;
+	CStatic m_elevatorDetailBody;
+	CStatic m_algorithmPlaceholder;
 	CStatic m_parameterSection;
 	CStatic m_controlSection;
 	CStatic m_speedSection;
@@ -92,6 +97,8 @@ private:
 	void InitializeListControls();
 	void RelayoutUI();
 	void UpdateTabPageVisibility();
+	void UpdateRightPanelVisibility();
+	void UpdateElevatorDetails(const std::shared_ptr<const SimulationUISnapshot>& snapshot);
 	void SetSpeedPreset(const wchar_t* speedText);
 	void UpdateSpeedDisplay(double speed);
 	bool ReadConfiguration(SimulationConfig& config, std::uint32_t& seed);

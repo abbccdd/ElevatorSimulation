@@ -45,13 +45,36 @@ BOOL ElevatorBuildingView::Create(CWnd* parent, UINT controlId)
 void ElevatorBuildingView::SetSnapshot(std::shared_ptr<const SimulationUISnapshot> snapshot)
 {
 	const std::size_t previousElevatorCount = m_snapshot ? m_snapshot->elevators.size() : 0;
+	const int previousFloorCount = m_snapshot ? m_snapshot->config.floorCount : 0;
 	m_snapshot = std::move(snapshot);
-	if (!m_snapshot || m_snapshot->elevators.size() <= DetailedElevatorLimit ||
+	if (!m_snapshot)
+	{
+		Invalidate(FALSE);
+		return;
+	}
+	if (m_snapshot->elevators.size() <= DetailedElevatorLimit ||
 		m_snapshot->elevators.size() != previousElevatorCount)
 	{
 		m_selectedGroup = -1;
 	}
+	if (m_snapshot->config.floorCount != previousFloorCount)
+		FitAllFloors();
+	if (!m_snapshot->elevators.empty())
+	{
+		const bool selectedElevatorExists = std::any_of(m_snapshot->elevators.begin(),
+			m_snapshot->elevators.end(), [this](const ElevatorSnapshot& elevator)
+			{
+				return elevator.id == m_selectedElevatorId;
+			});
+		if (!selectedElevatorExists)
+			m_selectedElevatorId = InvalidElevatorId;
+	}
 	Invalidate(FALSE);
+}
+
+int ElevatorBuildingView::GetSelectedElevatorId() const noexcept
+{
+	return m_selectedElevatorId;
 }
 
 void ElevatorBuildingView::OnPaint()
@@ -83,7 +106,12 @@ void ElevatorBuildingView::DrawView(CDC& dc, const CRect& client)
 	dc.SetTextColor(TextColor);
 	if (GetFont() != nullptr) dc.SelectObject(GetFont());
 	m_groupHitRects.clear();
+	m_elevatorHitAreas.clear();
 	m_backHitRect.SetRectEmpty();
+	m_zoomFitHitRect.SetRectEmpty();
+	m_zoomInHitRect.SetRectEmpty();
+	m_zoomOutHitRect.SetRectEmpty();
+	m_floorScaleHitRect.SetRectEmpty();
 
 	if (!m_snapshot)
 	{
@@ -95,6 +123,7 @@ void ElevatorBuildingView::DrawView(CDC& dc, const CRect& client)
 
 	CRect content = client;
 	content.DeflateRect(10, 8);
+	DrawZoomControls(dc, content);
 	const int elevatorCount = static_cast<int>(m_snapshot->elevators.size());
 	if (elevatorCount <= DetailedElevatorLimit)
 	{
@@ -114,17 +143,26 @@ void ElevatorBuildingView::DrawView(CDC& dc, const CRect& client)
 
 int ElevatorBuildingView::FloorY(int floor, const CRect& plot) const
 {
-	const int floorCount = m_snapshot->config.floorCount;
-	const double position = static_cast<double>(floor - 1) / static_cast<double>(floorCount - 1);
+	const double position = static_cast<double>(floor - m_visibleFloorMin) /
+		static_cast<double>(m_visibleFloorMax - m_visibleFloorMin);
 	return plot.bottom - static_cast<int>(std::lround(position * plot.Height()));
+}
+
+int ElevatorBuildingView::FloorAtY(int y, const CRect& plot) const
+{
+	const double position = static_cast<double>(plot.bottom - y) /
+		static_cast<double>(plot.Height());
+	const int floor = m_visibleFloorMin + static_cast<int>(std::lround(
+		position * (m_visibleFloorMax - m_visibleFloorMin)));
+	return (std::max)(m_visibleFloorMin, (std::min)(floor, m_visibleFloorMax));
 }
 
 int ElevatorBuildingView::FloorLabelStep() const
 {
-	const int floorCount = m_snapshot->config.floorCount;
-	if (floorCount <= 30) return 1;
-	if (floorCount <= 40) return 2;
-	if (floorCount <= 60) return 5;
+	const int visibleFloorCount = m_visibleFloorMax - m_visibleFloorMin + 1;
+	if (visibleFloorCount <= 30) return 1;
+	if (visibleFloorCount <= 40) return 2;
+	if (visibleFloorCount <= 60) return 5;
 	return 10;
 }
 
@@ -147,13 +185,15 @@ void ElevatorBuildingView::DrawFloorScale(CDC& dc, const CRect& plot) const
 	}
 
 	const int labelStep = FloorLabelStep();
-	for (int floor = 1; floor <= floorCount; ++floor)
+	const int visibleFloorCount = m_visibleFloorMax - m_visibleFloorMin + 1;
+	for (int floor = m_visibleFloorMin; floor <= m_visibleFloorMax; ++floor)
 	{
 		const std::size_t upCount = upWaiting[static_cast<std::size_t>(floor)];
 		const std::size_t downCount = downWaiting[static_cast<std::size_t>(floor)];
 		const bool active = upCount > 0 || downCount > 0;
-		const bool major = floor == 1 || floor == floorCount || floor % labelStep == 0;
-		const bool drawLine = floorCount <= 60 || major || active;
+		const bool major = floor == m_visibleFloorMin || floor == m_visibleFloorMax ||
+			floor % labelStep == 0;
+		const bool drawLine = visibleFloorCount <= 60 || major || active;
 		if (!drawLine) continue;
 
 		const int y = FloorY(floor, plot);
@@ -186,14 +226,95 @@ void ElevatorBuildingView::DrawFloorScale(CDC& dc, const CRect& plot) const
 	dc.SetTextColor(TextColor);
 }
 
+void ElevatorBuildingView::DrawZoomControls(CDC& dc, const CRect& content)
+{
+	const int top = content.top;
+	const int right = content.right;
+	m_zoomOutHitRect.SetRect(right - 54, top, right, top + 30);
+	m_zoomInHitRect.SetRect(right - 112, top, right - 58, top + 30);
+	m_zoomFitHitRect.SetRect(right - 184, top, right - 116, top + 30);
+
+	const bool fit = m_visibleFloorMin == 1 &&
+		m_visibleFloorMax == m_snapshot->config.floorCount;
+	const CRect buttons[] = { m_zoomFitHitRect, m_zoomInHitRect, m_zoomOutHitRect };
+	const wchar_t* labels[] = { L"全楼 / Fit", L"放大 +", L"缩小 -" };
+	for (int index = 0; index < 3; ++index)
+	{
+		const bool active = index == 0 && fit;
+		dc.FillSolidRect(buttons[index], active ? AccentFillColor : SurfaceColor);
+		dc.Draw3dRect(buttons[index], active ? AccentColor : MajorLineColor,
+			active ? AccentColor : MajorLineColor);
+		CRect textRect = buttons[index];
+		dc.SetTextColor(active ? AccentColor : TextColor);
+		dc.DrawText(labels[index], textRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+	}
+	dc.SetTextColor(TextColor);
+}
+
+CString ElevatorBuildingView::VisibleFloorText() const
+{
+	CString text;
+	text.Format(L"%dF-%dF", m_visibleFloorMin, m_visibleFloorMax);
+	return text;
+}
+
+void ElevatorBuildingView::FitAllFloors()
+{
+	m_visibleFloorMin = 1;
+	m_visibleFloorMax = m_snapshot->config.floorCount;
+	m_zoomCenterFloor = (m_visibleFloorMin + m_visibleFloorMax) / 2;
+}
+
+void ElevatorBuildingView::SetVisibleFloorCount(int floorCount)
+{
+	const int totalFloorCount = m_snapshot->config.floorCount;
+	floorCount = (std::max)((std::min)(MinimumVisibleFloorCount, totalFloorCount),
+		(std::min)(floorCount, totalFloorCount));
+	int minimum = m_zoomCenterFloor - (floorCount - 1) / 2;
+	int maximum = minimum + floorCount - 1;
+	if (minimum < 1)
+	{
+		maximum += 1 - minimum;
+		minimum = 1;
+	}
+	if (maximum > totalFloorCount)
+	{
+		minimum -= maximum - totalFloorCount;
+		maximum = totalFloorCount;
+	}
+	m_visibleFloorMin = minimum;
+	m_visibleFloorMax = maximum;
+	m_zoomCenterFloor = (minimum + maximum + 1) / 2;
+}
+
+void ElevatorBuildingView::ZoomIn()
+{
+	const int currentFloorCount = m_visibleFloorMax - m_visibleFloorMin + 1;
+	SetVisibleFloorCount((currentFloorCount + 1) / 2);
+}
+
+void ElevatorBuildingView::ZoomOut()
+{
+	const int currentFloorCount = m_visibleFloorMax - m_visibleFloorMin + 1;
+	SetVisibleFloorCount(currentFloorCount * 2);
+}
+
+void ElevatorBuildingView::SelectElevator(int elevatorId)
+{
+	if (m_selectedElevatorId == elevatorId) return;
+	m_selectedElevatorId = elevatorId;
+	Invalidate(FALSE);
+	GetTopLevelParent()->SendMessage(WM_ELEVATOR_SELECTION_CHANGED,
+		static_cast<WPARAM>(elevatorId), 0);
+}
+
 void ElevatorBuildingView::DrawDetailed(CDC& dc, const CRect& content,
 	int firstElevator, int elevatorCount)
 {
 	CString title;
 	if (m_snapshot->elevators.size() <= DetailedElevatorLimit)
 	{
-		title.Format(L"%d 层 · %d 台电梯 · 详细模式", m_snapshot->config.floorCount,
-			elevatorCount);
+		title.Format(L"%s · %d 台电梯 · 详细模式", VisibleFloorText(), elevatorCount);
 	}
 	else
 	{
@@ -204,16 +325,17 @@ void ElevatorBuildingView::DrawDetailed(CDC& dc, const CRect& content,
 		dc.SetTextColor(AccentColor);
 		dc.DrawText(L"← 返回总览", backText, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 		const int lastElevator = firstElevator + elevatorCount;
-		title.Format(L"%s · E%d-E%d · 详细模式", GroupName(m_selectedGroup),
-			firstElevator + 1, lastElevator);
+		title.Format(L"%s · E%d-E%d · %s · 详细模式", GroupName(m_selectedGroup),
+			firstElevator + 1, lastElevator, VisibleFloorText());
 	}
 
 	CRect titleRect(content.left + (m_backHitRect.IsRectEmpty() ? 0 : 124),
-		content.top, content.right, content.top + 30);
+		content.top, m_zoomFitHitRect.left - 8, content.top + 30);
 	dc.SetTextColor(TextColor);
 	dc.DrawText(title, titleRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
 	CRect plot(content.left + 108, content.top + 48, content.right - 8, content.bottom - 28);
+	m_floorScaleHitRect.SetRect(content.left, plot.top, plot.left, plot.bottom);
 	DrawFloorScale(dc, plot);
 	const int shaftWidth = plot.Width() / elevatorCount;
 	for (int localIndex = 0; localIndex < elevatorCount; ++localIndex)
@@ -224,10 +346,23 @@ void ElevatorBuildingView::DrawDetailed(CDC& dc, const CRect& content,
 		const int shaftRight = localIndex + 1 == elevatorCount
 			? plot.right : shaftLeft + shaftWidth;
 		const int centerX = (shaftLeft + shaftRight) / 2;
+		const bool selected = elevator.id == m_selectedElevatorId;
+		CRect shaftHitRect(shaftLeft + 2, content.top + 30, shaftRight - 2, plot.bottom);
+		m_elevatorHitAreas.push_back({ elevator.id, shaftHitRect });
+		if (selected)
+		{
+			CPen selectionPen(PS_SOLID, 2, AccentColor);
+			CPen* previousPen = dc.SelectObject(&selectionPen);
+			CBrush* previousBrush = static_cast<CBrush*>(dc.SelectStockObject(NULL_BRUSH));
+			dc.Rectangle(shaftHitRect);
+			dc.SelectObject(previousBrush);
+			dc.SelectObject(previousPen);
+		}
 
 		CRect elevatorLabel(shaftLeft, content.top + 30, shaftRight, content.top + 48);
 		CString name;
 		name.Format(L"E%d", elevator.id + 1);
+		dc.SetTextColor(selected ? AccentColor : TextColor);
 		dc.DrawText(name, elevatorLabel, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
 		CPen shaftPen(PS_SOLID, 1, MajorLineColor);
@@ -235,6 +370,11 @@ void ElevatorBuildingView::DrawDetailed(CDC& dc, const CRect& content,
 		dc.MoveTo(centerX, plot.top);
 		dc.LineTo(centerX, plot.bottom);
 		dc.SelectObject(previousPen);
+		if (elevator.currentFloor < m_visibleFloorMin ||
+			elevator.currentFloor > m_visibleFloorMax)
+		{
+			continue;
+		}
 
 		const int carWidth = (std::max)(26, (std::min)(64, shaftRight - shaftLeft - 8));
 		const int carHeight = 42;
@@ -243,15 +383,16 @@ void ElevatorBuildingView::DrawDetailed(CDC& dc, const CRect& content,
 			(std::min)(carTop, static_cast<int>(plot.bottom) - carHeight));
 		CRect car(centerX - carWidth / 2, carTop,
 			centerX + carWidth / 2, carTop + carHeight);
-		dc.FillSolidRect(car, AccentFillColor);
+		dc.FillSolidRect(car, selected ? AccentColor : AccentFillColor);
 		dc.Draw3dRect(car, AccentColor, AccentColor);
 		CString carText;
 		carText.Format(L"%dF %s\n%d/%d", elevator.currentFloor,
 			DirectionText(elevator.direction), elevator.passengerCount, elevator.capacity);
 		CRect carTextRect = car;
-		dc.SetTextColor(TextColor);
+		dc.SetTextColor(selected ? SurfaceColor : TextColor);
 		dc.DrawText(carText, carTextRect, DT_CENTER | DT_VCENTER);
 	}
+	dc.SetTextColor(TextColor);
 }
 
 CString ElevatorBuildingView::GroupName(int groupIndex) const
@@ -268,13 +409,14 @@ void ElevatorBuildingView::DrawOverview(CDC& dc, const CRect& content)
 {
 	const int elevatorCount = static_cast<int>(m_snapshot->elevators.size());
 	const int groupCount = (elevatorCount + ElevatorsPerGroup - 1) / ElevatorsPerGroup;
-	CRect titleRect(content.left, content.top, content.right, content.top + 30);
+	CRect titleRect(content.left, content.top, m_zoomFitHitRect.left - 8, content.top + 30);
 	CString title;
-	title.Format(L"%d 层 · %d 台电梯 · %d 个分组    点击分组查看完整井道",
-		m_snapshot->config.floorCount, elevatorCount, groupCount);
+	title.Format(L"%s · %d 台电梯 · %d 个分组    点击分组查看完整井道",
+		VisibleFloorText(), elevatorCount, groupCount);
 	dc.DrawText(title, titleRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
 	CRect plot(content.left + 108, content.top + 52, content.right - 8, content.bottom - 28);
+	m_floorScaleHitRect.SetRect(content.left, plot.top, plot.left, plot.bottom);
 	const int groupWidth = plot.Width() / groupCount;
 	m_groupHitRects.reserve(static_cast<std::size_t>(groupCount));
 	for (int groupIndex = 0; groupIndex < groupCount; ++groupIndex)
@@ -308,11 +450,18 @@ void ElevatorBuildingView::DrawOverview(CDC& dc, const CRect& content)
 		{
 			const auto& elevator = m_snapshot->elevators[
 				static_cast<std::size_t>(firstElevator + localIndex)];
+			if (elevator.currentFloor < m_visibleFloorMin ||
+				elevator.currentFloor > m_visibleFloorMax)
+			{
+				continue;
+			}
 			const int markerX = count == 1 ? groupRect.CenterPoint().x
 				: markerAreaLeft + localIndex * markerAreaWidth / (count - 1);
 			const int markerY = FloorY(elevator.currentFloor, plot);
-			CRect marker(markerX - 3, markerY - 4, markerX + 4, markerY + 5);
-			dc.FillSolidRect(marker, AccentColor);
+			const bool selected = elevator.id == m_selectedElevatorId;
+			CRect marker(markerX - (selected ? 5 : 3), markerY - (selected ? 6 : 4),
+				markerX + (selected ? 6 : 4), markerY + (selected ? 7 : 5));
+			dc.FillSolidRect(marker, selected ? ActivityColor : AccentColor);
 		}
 	}
 	dc.SetTextColor(TextColor);
@@ -321,12 +470,27 @@ void ElevatorBuildingView::DrawOverview(CDC& dc, const CRect& content)
 void ElevatorBuildingView::OnLButtonUp(UINT flags, CPoint point)
 {
 	SetFocus();
-	if (m_selectedGroup >= 0 && m_backHitRect.PtInRect(point))
+	if (m_zoomFitHitRect.PtInRect(point))
+	{
+		FitAllFloors();
+		Invalidate(FALSE);
+	}
+	else if (m_zoomInHitRect.PtInRect(point))
+	{
+		ZoomIn();
+		Invalidate(FALSE);
+	}
+	else if (m_zoomOutHitRect.PtInRect(point))
+	{
+		ZoomOut();
+		Invalidate(FALSE);
+	}
+	else if (m_selectedGroup >= 0 && m_backHitRect.PtInRect(point))
 	{
 		m_selectedGroup = -1;
 		Invalidate(FALSE);
 	}
-	else if (m_selectedGroup < 0)
+	else if (m_selectedGroup < 0 && !m_groupHitRects.empty())
 	{
 		for (std::size_t index = 0; index < m_groupHitRects.size(); ++index)
 		{
@@ -336,6 +500,18 @@ void ElevatorBuildingView::OnLButtonUp(UINT flags, CPoint point)
 			break;
 		}
 	}
+	else
+	{
+		for (const auto& hitArea : m_elevatorHitAreas)
+		{
+			if (!hitArea.rect.PtInRect(point)) continue;
+			SelectElevator(hitArea.elevatorId);
+			CWnd::OnLButtonUp(flags, point);
+			return;
+		}
+	}
+	if (m_floorScaleHitRect.PtInRect(point))
+		m_zoomCenterFloor = FloorAtY(point.y, m_floorScaleHitRect);
 	CWnd::OnLButtonUp(flags, point);
 }
 
@@ -344,9 +520,13 @@ BOOL ElevatorBuildingView::OnSetCursor(CWnd* window, UINT hitTest, UINT message)
 	CPoint point;
 	GetCursorPos(&point);
 	ScreenToClient(&point);
-	if ((m_selectedGroup >= 0 && m_backHitRect.PtInRect(point)) ||
+	if (m_zoomFitHitRect.PtInRect(point) || m_zoomInHitRect.PtInRect(point) ||
+		m_zoomOutHitRect.PtInRect(point) || m_floorScaleHitRect.PtInRect(point) ||
+		(m_selectedGroup >= 0 && m_backHitRect.PtInRect(point)) ||
 		std::any_of(m_groupHitRects.begin(), m_groupHitRects.end(),
-			[point](const CRect& rect) { return rect.PtInRect(point); }))
+			[point](const CRect& rect) { return rect.PtInRect(point); }) ||
+		std::any_of(m_elevatorHitAreas.begin(), m_elevatorHitAreas.end(),
+			[point](const ElevatorHitArea& area) { return area.rect.PtInRect(point); }))
 	{
 		::SetCursor(::LoadCursor(nullptr, IDC_HAND));
 		return TRUE;

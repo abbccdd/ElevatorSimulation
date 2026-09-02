@@ -42,7 +42,7 @@ namespace
 		{
 		case Direction::Up: return L"↑";
 		case Direction::Down: return L"↓";
-		default: return L"-";
+		default: return L"Idle";
 		}
 	}
 
@@ -50,12 +50,12 @@ namespace
 	{
 		switch (state)
 		{
-		case ElevatorState::MovingUp: return L"向上移动";
-		case ElevatorState::MovingDown: return L"向下移动";
-		case ElevatorState::Boarding: return L"上客";
-		case ElevatorState::Alighting: return L"下客";
-		case ElevatorState::Stopped: return L"停站";
-		default: return L"空闲";
+		case ElevatorState::MovingUp: return L"MovingUp";
+		case ElevatorState::MovingDown: return L"MovingDown";
+		case ElevatorState::Boarding: return L"Boarding";
+		case ElevatorState::Alighting: return L"Alighting";
+		case ElevatorState::Stopped: return L"Stopped";
+		default: return L"Idle";
 		}
 	}
 
@@ -160,6 +160,9 @@ BEGIN_MESSAGE_MAP(CElevatorSimulationDlg, CDialogEx)
 	ON_BN_CLICKED(IDC_BUTTON_SPEED_10, &CElevatorSimulationDlg::OnBnClickedSpeed10)
 	ON_BN_CLICKED(IDC_BUTTON_PANEL_TOGGLE, &CElevatorSimulationDlg::OnBnClickedPanelToggle)
 	ON_NOTIFY(TCN_SELCHANGE, IDC_TAB_PAGES, &CElevatorSimulationDlg::OnTcnSelchangePages)
+	ON_NOTIFY(TCN_SELCHANGE, IDC_TAB_RIGHT, &CElevatorSimulationDlg::OnTcnSelchangeRightTabs)
+	ON_MESSAGE(WM_ELEVATOR_SELECTION_CHANGED,
+		&CElevatorSimulationDlg::OnElevatorSelectionChanged)
 END_MESSAGE_MAP()
 
 
@@ -289,8 +292,20 @@ void CElevatorSimulationDlg::CreateUIFramework()
 			IDC_BUTTON_SPEED_1 + static_cast<UINT>(index));
 	}
 
-	m_rightHint.Create(L"Hall Call 归属（Panel 数据占位）", labelStyle, CRect(), this,
-		IDC_RIGHT_HINT);
+	m_rightTabs.Create(WS_CHILD | WS_VISIBLE | WS_TABSTOP | TCS_TABS | TCS_SINGLELINE,
+		CRect(), this, IDC_TAB_RIGHT);
+	m_rightTabs.InsertItem(0, L"Hall Call");
+	m_rightTabs.InsertItem(1, L"电梯详情");
+	m_rightTabs.InsertItem(2, L"算法观察");
+	m_rightTabs.SetCurSel(0);
+	m_elevatorDetailTitle.Create(L"未选择电梯", labelStyle, CRect(), this,
+		IDC_RIGHT_ELEVATOR_TITLE);
+	m_elevatorDetailTitle.SetFont(&m_sectionFont);
+	m_elevatorDetailBody.Create(L"请在中央视图选择一台电梯",
+		WS_CHILD | WS_VISIBLE | SS_LEFT, CRect(), this, IDC_RIGHT_ELEVATOR_DETAILS);
+	m_algorithmPlaceholder.Create(L"选择 Hall Call 后将在后续显示\r\nETA / Cost / feasible",
+		WS_CHILD | WS_VISIBLE | WS_BORDER | SS_CENTER | SS_CENTERIMAGE,
+		CRect(), this, IDC_RIGHT_ALGORITHM_PLACEHOLDER);
 
 	m_pageTabs.Create(WS_CHILD | WS_VISIBLE | WS_TABSTOP | TCS_TABS | TCS_SINGLELINE,
 		CRect(), this, IDC_TAB_PAGES);
@@ -418,9 +433,15 @@ void CElevatorSimulationDlg::RelayoutUI()
 		place(m_panelToggle, rightX + rightWidth - 38, contentTop + 15, 30, 27);
 		if (m_rightPanelExpanded)
 		{
-			place(m_rightHint, rightX + 12, contentTop + 43, rightWidth - 24, 24);
-			place(m_hallCallList, rightX + 12, contentTop + 69,
-				rightWidth - 24, contentBottom - contentTop - 82);
+			place(m_rightTabs, rightX + 12, contentTop + 43, rightWidth - 24, 29);
+			place(m_hallCallList, rightX + 12, contentTop + 78,
+				rightWidth - 24, contentBottom - contentTop - 91);
+			place(m_elevatorDetailTitle, rightX + 16, contentTop + 84,
+				rightWidth - 32, 30);
+			place(m_elevatorDetailBody, rightX + 16, contentTop + 124,
+				rightWidth - 32, 130);
+			place(m_algorithmPlaceholder, rightX + 12, contentTop + 78,
+				rightWidth - 24, contentBottom - contentTop - 91);
 		}
 	}
 	else
@@ -461,8 +482,7 @@ void CElevatorSimulationDlg::UpdateTabPageVisibility()
 	{
 		control->ShowWindow(realTimeCommand);
 	}
-	m_rightHint.ShowWindow(realTimePage && m_rightPanelExpanded ? SW_SHOW : SW_HIDE);
-	m_hallCallList.ShowWindow(realTimePage && m_rightPanelExpanded ? SW_SHOW : SW_HIDE);
+	UpdateRightPanelVisibility();
 	m_pagePlaceholder.ShowWindow(realTimePage ? SW_HIDE : SW_SHOW);
 	if (!realTimePage)
 	{
@@ -471,6 +491,17 @@ void CElevatorSimulationDlg::UpdateTabPageVisibility()
 			: L"算法观察页面结构已预留，本轮不接入调度可视化。");
 	}
 	RelayoutUI();
+}
+
+void CElevatorSimulationDlg::UpdateRightPanelVisibility()
+{
+	const bool panelVisible = m_pageTabs.GetCurSel() == 0 && m_rightPanelExpanded;
+	m_rightTabs.ShowWindow(panelVisible ? SW_SHOW : SW_HIDE);
+	const int selectedTab = m_rightTabs.GetCurSel();
+	m_hallCallList.ShowWindow(panelVisible && selectedTab == 0 ? SW_SHOW : SW_HIDE);
+	m_elevatorDetailTitle.ShowWindow(panelVisible && selectedTab == 1 ? SW_SHOW : SW_HIDE);
+	m_elevatorDetailBody.ShowWindow(panelVisible && selectedTab == 1 ? SW_SHOW : SW_HIDE);
+	m_algorithmPlaceholder.ShowWindow(panelVisible && selectedTab == 2 ? SW_SHOW : SW_HIDE);
 }
 
 void CElevatorSimulationDlg::UpdateSpeedDisplay(double speed)
@@ -510,12 +541,31 @@ void CElevatorSimulationDlg::OnBnClickedPanelToggle()
 	m_rightPanelExpanded = !m_rightPanelExpanded;
 	m_panelToggle.SetWindowTextW(m_rightPanelExpanded ? L"<<" : L">>");
 	UpdateTabPageVisibility();
+	if (m_rightPanelExpanded) RefreshSimulationView();
 }
 
 void CElevatorSimulationDlg::OnTcnSelchangePages(NMHDR*, LRESULT* pResult)
 {
 	UpdateTabPageVisibility();
+	if (m_pageTabs.GetCurSel() == 0) RefreshSimulationView();
 	*pResult = 0;
+}
+
+void CElevatorSimulationDlg::OnTcnSelchangeRightTabs(NMHDR*, LRESULT* pResult)
+{
+	UpdateRightPanelVisibility();
+	RelayoutUI();
+	RefreshSimulationView();
+	*pResult = 0;
+}
+
+LRESULT CElevatorSimulationDlg::OnElevatorSelectionChanged(WPARAM, LPARAM)
+{
+	m_rightTabs.SetCurSel(1);
+	UpdateRightPanelVisibility();
+	RelayoutUI();
+	RefreshSimulationView();
+	return 0;
 }
 
 void CElevatorSimulationDlg::InitializeListControls()
@@ -637,6 +687,39 @@ void CElevatorSimulationDlg::UpdateControlStates(
 		speedButton.EnableWindow(active && ready);
 }
 
+void CElevatorSimulationDlg::UpdateElevatorDetails(
+	const std::shared_ptr<const SimulationUISnapshot>& snapshot)
+{
+	const int selectedElevatorId = m_buildingView.GetSelectedElevatorId();
+	if (!snapshot || selectedElevatorId == InvalidElevatorId)
+	{
+		m_elevatorDetailTitle.SetWindowTextW(L"未选择电梯");
+		m_elevatorDetailBody.SetWindowTextW(L"请在中央视图选择一台电梯");
+		return;
+	}
+
+	const auto elevator = std::find_if(snapshot->elevators.begin(), snapshot->elevators.end(),
+		[selectedElevatorId](const ElevatorSnapshot& item)
+		{
+			return item.id == selectedElevatorId;
+		});
+	if (elevator == snapshot->elevators.end())
+	{
+		m_elevatorDetailTitle.SetWindowTextW(L"未选择电梯");
+		m_elevatorDetailBody.SetWindowTextW(L"请在中央视图选择一台电梯");
+		return;
+	}
+
+	CString title;
+	title.Format(L"E%d", elevator->id + 1);
+	m_elevatorDetailTitle.SetWindowTextW(title);
+	CString details;
+	details.Format(L"当前楼层：%dF\r\n\r\n方向：%s\r\n\r\n状态：%s\r\n\r\n载客：%d / %d",
+		elevator->currentFloor, DirectionText(elevator->direction),
+		ElevatorStateText(elevator->state), elevator->passengerCount, elevator->capacity);
+	m_elevatorDetailBody.SetWindowTextW(details);
+}
+
 void CElevatorSimulationDlg::RefreshSimulationView()
 {
 	const auto snapshot = m_simulationWorker ? m_simulationWorker->GetLatestSnapshot() : nullptr;
@@ -644,6 +727,7 @@ void CElevatorSimulationDlg::RefreshSimulationView()
 	{
 		SetDlgItemTextW(IDC_SIMULATION_STATE, L"Initializing / 正在初始化");
 		m_buildingView.SetSnapshot(nullptr);
+		UpdateElevatorDetails(snapshot);
 		UpdateControlStates(snapshot);
 		return;
 	}
@@ -670,27 +754,32 @@ void CElevatorSimulationDlg::RefreshSimulationView()
 	}
 
 	m_buildingView.SetSnapshot(snapshot);
+	UpdateElevatorDetails(snapshot);
 
-	m_hallCallList.SetRedraw(FALSE);
-	m_hallCallList.DeleteAllItems();
-	for (std::size_t index = 0; index < hallCalls.size(); ++index)
+	if (m_pageTabs.GetCurSel() == 0 && m_rightPanelExpanded &&
+		m_rightTabs.GetCurSel() == 0)
 	{
-		const auto& call = hallCalls[index];
-		const int row = static_cast<int>(index);
-		CString value;
-		value.Format(L"%dF", call.floorNumber);
-		m_hallCallList.InsertItem(row, value);
-		m_hallCallList.SetItemText(row, 1, DirectionText(call.direction));
-		value.Format(L"%zu", call.waitingCount);
-		m_hallCallList.SetItemText(row, 2, value);
-		if (call.assignedElevatorId == InvalidElevatorId)
-			value = L"未分配";
-		else
-			value.Format(L"E%d", call.assignedElevatorId + 1);
-		m_hallCallList.SetItemText(row, 3, value);
+		m_hallCallList.SetRedraw(FALSE);
+		m_hallCallList.DeleteAllItems();
+		for (std::size_t index = 0; index < hallCalls.size(); ++index)
+		{
+			const auto& call = hallCalls[index];
+			const int row = static_cast<int>(index);
+			CString value;
+			value.Format(L"%dF", call.floorNumber);
+			m_hallCallList.InsertItem(row, value);
+			m_hallCallList.SetItemText(row, 1, DirectionText(call.direction));
+			value.Format(L"%zu", call.waitingCount);
+			m_hallCallList.SetItemText(row, 2, value);
+			if (call.assignedElevatorId == InvalidElevatorId)
+				value = L"未分配";
+			else
+				value.Format(L"E%d", call.assignedElevatorId + 1);
+			m_hallCallList.SetItemText(row, 3, value);
+		}
+		m_hallCallList.SetRedraw(TRUE);
+		m_hallCallList.Invalidate(FALSE);
 	}
-	m_hallCallList.SetRedraw(TRUE);
-	m_hallCallList.Invalidate(FALSE);
 
 	CString statisticValues[6];
 	statisticValues[0].Format(L"%zu", statistics.totalPassengerCount);
