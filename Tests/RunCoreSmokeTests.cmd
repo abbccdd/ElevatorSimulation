@@ -14,7 +14,7 @@ if errorlevel 1 exit /b 2
 if not exist "%~dp0..\build\core-smoke\%TEST_ARCH%" mkdir "%~dp0..\build\core-smoke\%TEST_ARCH%"
 pushd "%~dp0..\build\core-smoke\%TEST_ARCH%"
 if errorlevel 1 exit /b 2
-cl /nologo /std:c++17 /EHsc /W4 /WX /utf-8 /MDd /Zi /I"%~dp0..\ElevatorSimulation" "%~dp0CoreSmokeTests.cpp" "%~dp0..\ElevatorSimulation\Core\Passenger.cpp" "%~dp0..\ElevatorSimulation\Core\Floor.cpp" "%~dp0..\ElevatorSimulation\Core\Elevator.cpp" "%~dp0..\ElevatorSimulation\Core\Dispatcher.cpp" "%~dp0..\ElevatorSimulation\Core\Simulation.cpp" "%~dp0..\ElevatorSimulation\Statistics\Statistics.cpp" /Fe:CoreSmokeTests.exe
+cl /nologo /std:c++17 /EHsc /W4 /WX /utf-8 /MDd /Zi /I"%~dp0..\ElevatorSimulation" "%~dp0CoreSmokeTests.cpp" "%~dp0..\ElevatorSimulation\Core\Passenger.cpp" "%~dp0..\ElevatorSimulation\Core\Floor.cpp" "%~dp0..\ElevatorSimulation\Core\Elevator.cpp" "%~dp0..\ElevatorSimulation\Core\Dispatcher.cpp" "%~dp0..\ElevatorSimulation\Core\FixedThreadPool.cpp" "%~dp0..\ElevatorSimulation\Core\Simulation.cpp" "%~dp0..\ElevatorSimulation\Statistics\Statistics.cpp" /Fe:CoreSmokeTests.exe
 if errorlevel 1 (
     popd
     exit /b 1

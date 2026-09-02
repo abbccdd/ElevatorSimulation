@@ -1,4 +1,4 @@
-﻿param(
+param(
     [ValidateSet('x64', 'x86')][string]$Architecture = 'x64'
 )
 $ErrorActionPreference = 'Stop'
@@ -20,7 +20,9 @@ foreach ($variant in @('baseline', 'current')) {
     $sourceRoot = if ($variant -eq 'baseline') { Join-Path $baselineRoot 'ElevatorSimulation' } else { Join-Path $projectRoot 'ElevatorSimulation' }
     $variantRoot = Join-Path $outputRoot $variant
     New-Item -ItemType Directory -Force $variantRoot | Out-Null
-    $sources = @('Core\Passenger.cpp','Core\Floor.cpp','Core\Elevator.cpp','Core\Dispatcher.cpp','Core\Simulation.cpp','Statistics\Statistics.cpp') |
+    $sourceFiles = @('Core\Passenger.cpp','Core\Floor.cpp','Core\Elevator.cpp','Core\Dispatcher.cpp','Core\Simulation.cpp','Statistics\Statistics.cpp')
+    if ($variant -eq 'current') { $sourceFiles += 'Core\FixedThreadPool.cpp' }
+    $sources = $sourceFiles |
         ForEach-Object { '"' + (Join-Path $sourceRoot $_) + '"' }
     $sourceArguments = $sources -join ' '
     $harness = Join-Path $PSScriptRoot 'DispatchComparison.cpp'

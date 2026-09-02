@@ -167,20 +167,5 @@
     <None Include="..\docs\AlgorithmDesign.md">
       <Filter>Development</Filter>
     </None>
-    <None Include="..\Demo\AlgorithmDemo.cpp">
-      <Filter>Development</Filter>
-    </None>
-    <None Include="..\Demo\GetAlgorithmDemoFingerprint.ps1">
-      <Filter>Development</Filter>
-    </None>
-    <None Include="..\Demo\RunAlgorithmDemo.cmd">
-      <Filter>Development</Filter>
-    </None>
-    <None Include="..\docs\AlgorithmDemoGuide.md">
-      <Filter>Development</Filter>
-    </None>
-    <None Include="..\启动算法演示.bat">
-      <Filter>Development</Filter>
-    </None>
   </ItemGroup>
 </Project>
