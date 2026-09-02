@@ -56,6 +56,7 @@
 #define IDC_STAT_TITLE_LAST             1095
 #define IDC_STAT_VALUE_FIRST            1100
 #define IDC_STAT_VALUE_LAST             1105
+#define IDC_BUILDING_VIEW               1106
 
 // 新对象的下一组默认值
 //
@@ -63,7 +64,7 @@
 #ifndef APSTUDIO_READONLY_SYMBOLS
 
 #define _APS_NEXT_RESOURCE_VALUE	129
-#define _APS_NEXT_CONTROL_VALUE		1106
+#define _APS_NEXT_CONTROL_VALUE		1107
 #define _APS_NEXT_SYMED_VALUE		101
 #define _APS_NEXT_COMMAND_VALUE		32771
 #endif

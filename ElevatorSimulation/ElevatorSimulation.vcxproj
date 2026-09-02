@@ -191,6 +191,7 @@
     </ResourceCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="ElevatorBuildingView.h" />
     <ClInclude Include="ElevatorSimulation.h" />
     <ClInclude Include="ElevatorSimulationDlg.h" />
     <ClInclude Include="framework.h" />
@@ -199,6 +200,7 @@
     <ClInclude Include="targetver.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="ElevatorBuildingView.cpp" />
     <ClCompile Include="ElevatorSimulation.cpp" />
     <ClCompile Include="ElevatorSimulationDlg.cpp" />
     <ClCompile Include="pch.cpp">

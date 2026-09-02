@@ -5,6 +5,7 @@
 #pragma once
 
 #include "Core/SimulationWorker.h"
+#include "ElevatorBuildingView.h"
 
 #include <array>
 #include <memory>
@@ -72,10 +73,9 @@ private:
 	CButton m_mainPanel;
 	CButton m_rightPanel;
 	CButton m_panelToggle;
+	ElevatorBuildingView m_buildingView;
 	CTabCtrl m_pageTabs;
 	CStatic m_pagePlaceholder;
-	CStatic m_mainFloorLabel;
-	CStatic m_mainElevatorLabel;
 	CStatic m_rightHint;
 	CStatic m_parameterSection;
 	CStatic m_controlSection;

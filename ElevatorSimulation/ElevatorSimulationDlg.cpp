@@ -265,6 +265,8 @@ void CElevatorSimulationDlg::CreateUIFramework()
 		CRect(), this, IDC_PANEL_RIGHT);
 	m_panelToggle.Create(L"<<", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
 		CRect(), this, IDC_BUTTON_PANEL_TOGGLE);
+	m_buildingView.Create(&m_mainPanel, IDC_BUILDING_VIEW);
+	m_buildingView.SetFont(GetFont());
 
 	m_parameterSection.Create(L"参数输入", labelStyle, CRect(), this, IDC_SECTION_PARAMETERS);
 	m_controlSection.Create(L"仿真控制", labelStyle, CRect(), this, IDC_SECTION_CONTROLS);
@@ -287,10 +289,6 @@ void CElevatorSimulationDlg::CreateUIFramework()
 			IDC_BUTTON_SPEED_1 + static_cast<UINT>(index));
 	}
 
-	m_mainFloorLabel.Create(L"楼层等待（数据占位）", labelStyle, CRect(), this,
-		IDC_MAIN_FLOOR_LABEL);
-	m_mainElevatorLabel.Create(L"电梯状态（数据占位）", labelStyle, CRect(), this,
-		IDC_MAIN_ELEVATOR_LABEL);
 	m_rightHint.Create(L"Hall Call 归属（Panel 数据占位）", labelStyle, CRect(), this,
 		IDC_RIGHT_HINT);
 
@@ -320,10 +318,12 @@ void CElevatorSimulationDlg::CreateUIFramework()
 		GetDlgItem(controlId)->ShowWindow(SW_SHOW);
 	for (int controlId : { IDC_BUTTON_START, IDC_BUTTON_PAUSE, IDC_BUTTON_RESUME,
 		IDC_BUTTON_RESET, IDC_SIMULATION_STATE, IDC_MODEL_TIME,
-		IDC_LIST_ELEVATORS, IDC_LIST_FLOORS, IDC_LIST_HALL_CALLS })
+		IDC_LIST_HALL_CALLS })
 	{
 		GetDlgItem(controlId)->ShowWindow(SW_SHOW);
 	}
+	m_elevatorList.ShowWindow(SW_HIDE);
+	m_floorList.ShowWindow(SW_HIDE);
 }
 
 void CElevatorSimulationDlg::RelayoutUI()
@@ -352,11 +352,6 @@ void CElevatorSimulationDlg::RelayoutUI()
 	const int centerRight = realTimePage ? rightX - gap : clientWidth - margin;
 	const int centerWidth = centerRight - centerX;
 	const int mainHeight = mainBottom - contentTop;
-	const int innerX = centerX + 12;
-	const int innerY = contentTop + 26;
-	const int innerWidth = centerWidth - 24;
-	const int floorWidth = (std::max)(160, innerWidth * 28 / 100);
-
 	auto place = [&toDevice](CWnd& control, int x, int y, int width, int height)
 	{
 		control.MoveWindow(toDevice(x), toDevice(y), toDevice(width), toDevice(height), TRUE);
@@ -417,12 +412,7 @@ void CElevatorSimulationDlg::RelayoutUI()
 	if (realTimePage)
 	{
 		place(m_mainPanel, centerX, contentTop, centerWidth, mainHeight);
-		place(m_mainFloorLabel, innerX, innerY, floorWidth, 22);
-		place(m_mainElevatorLabel, innerX + floorWidth + gap, innerY,
-			innerWidth - floorWidth - gap, 22);
-		place(m_floorList, innerX, innerY + 24, floorWidth, mainHeight - 62);
-		place(m_elevatorList, innerX + floorWidth + gap, innerY + 24,
-			innerWidth - floorWidth - gap, mainHeight - 62);
+		place(m_buildingView, 10, 22, centerWidth - 20, mainHeight - 32);
 
 		place(m_rightPanel, rightX, contentTop, rightWidth, contentBottom - contentTop);
 		place(m_panelToggle, rightX + rightWidth - 38, contentTop + 15, 30, 27);
@@ -452,21 +442,6 @@ void CElevatorSimulationDlg::RelayoutUI()
 		place(m_statValues[index], statX + 4, statsY + 37, width - 8, 43);
 	}
 
-	if (m_floorList.GetHeaderCtrl() != nullptr)
-	{
-		m_floorList.SetColumnWidth(0, toDevice(floorWidth / 4));
-		m_floorList.SetColumnWidth(1, toDevice((floorWidth * 3 / 4) / 2));
-		m_floorList.SetColumnWidth(2, toDevice((floorWidth * 3 / 4) / 2));
-	}
-	if (m_elevatorList.GetHeaderCtrl() != nullptr)
-	{
-		const int elevatorWidth = innerWidth - floorWidth - gap;
-		m_elevatorList.SetColumnWidth(0, toDevice(elevatorWidth * 14 / 100));
-		m_elevatorList.SetColumnWidth(1, toDevice(elevatorWidth * 15 / 100));
-		m_elevatorList.SetColumnWidth(2, toDevice(elevatorWidth * 15 / 100));
-		m_elevatorList.SetColumnWidth(3, toDevice(elevatorWidth * 32 / 100));
-		m_elevatorList.SetColumnWidth(4, toDevice(elevatorWidth * 20 / 100));
-	}
 	if (m_rightPanelExpanded && m_hallCallList.GetHeaderCtrl() != nullptr)
 	{
 		const int listWidth = rightWidth - 24;
@@ -482,9 +457,7 @@ void CElevatorSimulationDlg::UpdateTabPageVisibility()
 	const bool realTimePage = m_pageTabs.GetCurSel() == 0;
 	const int realTimeCommand = realTimePage ? SW_SHOW : SW_HIDE;
 	for (CWnd* control : { static_cast<CWnd*>(&m_mainPanel), static_cast<CWnd*>(&m_rightPanel),
-		static_cast<CWnd*>(&m_panelToggle), static_cast<CWnd*>(&m_mainFloorLabel),
-		static_cast<CWnd*>(&m_mainElevatorLabel), static_cast<CWnd*>(&m_floorList),
-		static_cast<CWnd*>(&m_elevatorList) })
+		static_cast<CWnd*>(&m_panelToggle), static_cast<CWnd*>(&m_buildingView) })
 	{
 		control->ShowWindow(realTimeCommand);
 	}
@@ -670,11 +643,10 @@ void CElevatorSimulationDlg::RefreshSimulationView()
 	if (!snapshot)
 	{
 		SetDlgItemTextW(IDC_SIMULATION_STATE, L"Initializing / 正在初始化");
+		m_buildingView.SetSnapshot(nullptr);
 		UpdateControlStates(snapshot);
 		return;
 	}
-	const auto& elevators = snapshot->elevators;
-	const auto& floors = snapshot->floors;
 	const auto& statistics = snapshot->statistics;
 	const auto& hallCalls = snapshot->hallCalls;
 	const auto& config = snapshot->config;
@@ -697,45 +669,7 @@ void CElevatorSimulationDlg::RefreshSimulationView()
 		UpdateSpeedDisplay(config.simulationSpeed);
 	}
 
-	if (m_elevatorList.GetItemCount() != static_cast<int>(elevators.size()))
-	{
-		m_elevatorList.DeleteAllItems();
-		for (std::size_t index = 0; index < elevators.size(); ++index)
-			m_elevatorList.InsertItem(static_cast<int>(index), L"");
-	}
-	for (std::size_t index = 0; index < elevators.size(); ++index)
-	{
-		const auto& elevator = elevators[index];
-		const int row = static_cast<int>(index);
-		CString value;
-		value.Format(L"E%d", elevator.id + 1);
-		m_elevatorList.SetItemText(row, 0, value);
-		value.Format(L"%dF", elevator.currentFloor);
-		m_elevatorList.SetItemText(row, 1, value);
-		m_elevatorList.SetItemText(row, 2, DirectionText(elevator.direction));
-		m_elevatorList.SetItemText(row, 3, ElevatorStateText(elevator.state));
-		value.Format(L"%d / %d", elevator.passengerCount, elevator.capacity);
-		m_elevatorList.SetItemText(row, 4, value);
-	}
-
-	if (m_floorList.GetItemCount() != static_cast<int>(floors.size()))
-	{
-		m_floorList.DeleteAllItems();
-		for (std::size_t index = 0; index < floors.size(); ++index)
-			m_floorList.InsertItem(static_cast<int>(index), L"");
-	}
-	for (std::size_t index = 0; index < floors.size(); ++index)
-	{
-		const auto& floor = floors[floors.size() - 1 - index];
-		const int row = static_cast<int>(index);
-		CString value;
-		value.Format(L"%dF", floor.floorNumber);
-		m_floorList.SetItemText(row, 0, value);
-		value.Format(L"%zu", floor.upWaitingCount);
-		m_floorList.SetItemText(row, 1, value);
-		value.Format(L"%zu", floor.downWaitingCount);
-		m_floorList.SetItemText(row, 2, value);
-	}
+	m_buildingView.SetSnapshot(snapshot);
 
 	m_hallCallList.SetRedraw(FALSE);
 	m_hallCallList.DeleteAllItems();
