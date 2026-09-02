@@ -328,7 +328,8 @@ void CElevatorSimulationDlg::RefreshSimulationView()
 	const auto& hallCalls = snapshot->hallCalls;
 	const auto& config = snapshot->config;
 	CString stateText = snapshot->workerActive ? SimulationStateText(snapshot->state) : L"Stopped / 已停止";
-	if (snapshot->state == SimulationState::Uninitialized && !snapshot->lastError.empty())
+	if (!snapshot->lastError.empty() &&
+		(!snapshot->workerActive || snapshot->state == SimulationState::Uninitialized))
 		stateText = L"Error / " + Utf8ToCString(snapshot->lastError);
 	SetDlgItemTextW(IDC_SIMULATION_STATE, stateText);
 	CString modelTime;

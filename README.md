@@ -1,11 +1,11 @@
 # 多电梯群控调度仿真系统
 
-本项目是 Visual Studio C++ / MFC 多人协作课程设计，最终目标是在 L 层建筑中仿真 N 部载客电梯的群控调度。**当前已实现可独立运行和测试的核心仿真：群控分配、单梯状态机、乘客事件、外呼生命周期与统计。MFC 正式操作界面仍待开发。**
+本项目是 Visual Studio C++ / MFC 多人协作课程设计，用于在 L 层建筑中仿真 N 部载客电梯的群控调度。**当前已实现可独立运行和测试的核心仿真，以及基于 SimulationWorker、命令队列和只读 Snapshot 的 MFC 动态操作界面。**
 
 ## 开发环境与启动
 
 - Windows、Visual Studio 2022、MSVC v143、Windows SDK 10.0、MFC（动态库）、Unicode。
-- C++17 + 标准 STL；不引入第三方库、数据库、网络服务或后台线程。
+- C++17 + 标准 STL；使用一个 Simulation 工作线程和 Dispatcher 固定线程池，不引入第三方并发库、数据库或网络服务。
 - 直接打开根目录 `ElevatorSimulation.sln`，不要另建重复 MFC 工程。
 - 选择 Debug / x64，生成解决方案后按 F5 或 Ctrl+F5 启动。
 - 解决方案的 x86 对应项目的 Win32；同时保留 Debug/Release × x64/x86 四种配置。
@@ -80,12 +80,12 @@ ElevatorSimulation/
 - `SimulationState`：Uninitialized、Ready、Running、Paused、Finished，用于总控制器生命周期。
 - `SimulationConfig`：L/N/K、S 秒/层、T 秒/人、总时长、全楼到达速率、仿真倍速。
 - `PassengerId`、`InvalidPassengerId=-1`、`InvalidElevatorId=-1`、`UnsetTime=-1.0`。
-- 原 `ElevatorSnapshot`、`FloorSnapshot`、`StatisticsSnapshot`、`ElevatorStatisticsSnapshot`；新增只读调度、乘客、外呼快照、完整 `SimulationUISnapshot`，以及单梯动作事件，不重新定义原状态类型。
+- 原 `ElevatorSnapshot`、`FloorSnapshot`、`StatisticsSnapshot`、`ElevatorStatisticsSnapshot`；新增只读调度、乘客、外呼快照、UI 高频视图 `SimulationUISnapshot`，以及单梯动作事件，不重新定义原状态类型。
 - 无状态函数 `GetDirection(startFloor, targetFloor)`；同层返回 Idle，但同层起终点的乘客仍属非法。
 
 禁止在其他文件重新定义 `ElevatorDirection`、`MoveDirection`、`PassengerStatus`、`ElevatorStatus`、`Config`、`SimulationParameter` 等语义重复类型。修改公共契约前，必须检查全部调用点并告知受影响的模块负责人。
 
-Snapshot 按值构造：`SimulationWorker` 将完整 `SimulationUISnapshot` 发布为 `shared_ptr<const ...>`，UI 原子读取最近一版，不与 Simulation 并发。UI 不获得 Floor/Elevator/Passenger 的可写指针、引用或容器；`GetConfig()` 同样返回副本。
+Snapshot 按值构造：`SimulationWorker` 将 UI 所需的 `SimulationUISnapshot` 发布为 `shared_ptr<const ...>`，UI 原子读取最近一版，不与 Simulation 并发。高频 UI Snapshot 不填充乘客明细，按需通过独立 `GetPassengerSnapshots()` 获取；UI 不获得 Floor/Elevator/Passenger 的可写指针、引用或容器，`GetConfig()` 同样返回副本。
 
 调度快照 `ElevatorDispatchSnapshot::StopService` 的 Idle 记录表示内呼/下客，Up/Down 记录表示外呼；新增 `boardingTargetFloors` 为已知等待乘客的 FIFO 目标层前缀，最多需要 capacity 人。Simulation 回填真实人数并跳过正在 Boarding 的队头；纯人数旧快照仍可使用，但不会推测未知下客楼层。`SelectElevator` / `SelectFromSnapshots` 签名保持兼容，Dispatcher 不直接读取 Passenger、Floor 或 Simulation。
 
@@ -133,7 +133,7 @@ Snapshot 按值构造：`SimulationWorker` 将完整 `SimulationUISnapshot` 发�
 | `GetPassengerSnapshots()` / `GetHallCallSnapshots()` | 读取活动乘客及外呼唯一归属副本 |
 | `ValidateState()` | 只读检查人数守恒、ID 所有权和外呼归属 |
 | `SetDispatcherExecutionMode(mode, workers)` | 选择 Sequential 或固定线程池 Parallel 评分；默认核心模式为 Sequential |
-| `GetUISnapshot()` | 由 Worker 线程构造完整 UI 只读副本 |
+| `GetUISnapshot()` | 由 Worker 线程构造 UI 所需只读副本；乘客明细按需使用独立接口 |
 | `SimulationWorker::{Start,Pause,Resume,Reset,Stop}` | 将控制命令按 FIFO 交给工作线程；Stop 正常 join |
 | `SimulationWorker::GetLatestSnapshot()` | UI 线程原子读取最近发布的不可变快照 |
 
@@ -235,10 +235,10 @@ Hall Call 动态改派只由新乘客、到层、上下客完成和零耗时状�
 
 | 验证项 | 结果 |
 | --- | --- |
-| Sequential / Parallel fixed seed | 120 个逐秒检查点的完整调度、乘客、外呼和统计一致；9,249 项并发断言通过 |
+| Sequential / Parallel fixed seed | 120 个逐秒检查点的完整调度、乘客、外呼和统计一致；9,255 项并发断言通过 |
 | Worker Pause / Resume | 暂停期间仿真时间不增长，恢复后不注入暂停墙钟时间 |
 | Worker Reset / Running 中关闭 | 固定 seed 恢复 Ready 初态；析构正常 Stop 并 join，无 detached thread |
-| Dispatcher 性能（x64 `/O2`，15 个评分线程） | N=6/30/60/120 为 1.15× / 2.71× / 3.62× / 5.13×；所有选择结果一致 |
+| Dispatcher 性能（x64 `/O2`，默认 8 个评分线程） | N=6/30/60/120 为 1.28× / 2.59× / 3.95× / 4.46×；所有选择结果一致 |
 
 性能数据由 `Tests/RunDispatchPerformance.ps1 x64` 在 120 层混合 LOOK 任务快照上测得，每种 N 执行 120 次选择；它衡量候选评分，不代表完整 UI 帧率或所有机器的固定加速比。
 

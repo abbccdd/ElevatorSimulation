@@ -216,7 +216,7 @@ void ElevatorDispatcher::SetExecutionMode(DispatcherExecutionMode mode, std::siz
     if (workerCount == 0)
     {
         const auto hardwareThreads = static_cast<std::size_t>(std::thread::hardware_concurrency());
-        workerCount = hardwareThreads > 1 ? hardwareThreads - 1 : 1;
+        workerCount = (std::min)(hardwareThreads > 1 ? hardwareThreads - 1 : 1, std::size_t{ 8 });
     }
     m_threadPool = std::make_unique<FixedThreadPool>(workerCount);
     m_executionMode = mode;

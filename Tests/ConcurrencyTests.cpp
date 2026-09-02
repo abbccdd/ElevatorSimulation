@@ -98,6 +98,28 @@ int main()
 {
     TestSuite tests("Concurrency");
 
+    tests.Run("default dispatcher pool is capped", [&]
+    {
+        ElevatorDispatcher dispatcher(DispatcherExecutionMode::Parallel);
+        const auto hardwareThreads = static_cast<std::size_t>(std::thread::hardware_concurrency());
+        const auto expected = (std::min)(hardwareThreads > 1 ? hardwareThreads - 1 : 1, std::size_t{ 8 });
+        tests.Check(dispatcher.GetWorkerCount() == expected, "default pool uses at most eight workers");
+
+        ElevatorDispatcher explicitDispatcher(DispatcherExecutionMode::Parallel, 12);
+        tests.Check(explicitDispatcher.GetWorkerCount() == 12, "explicit pool size remains unchanged");
+    });
+
+    tests.Run("UI snapshot omits passenger details", [&]
+    {
+        auto config = TestConfig();
+        config.passengerRate = 0.0;
+        Simulation simulation;
+        tests.Check(simulation.Initialize(config, 42), "initialize snapshot fixture");
+        tests.Check(simulation.AddPassenger(1, 2) != InvalidPassengerId, "add snapshot passenger");
+        tests.Check(simulation.GetPassengerSnapshots().size() == 1, "passenger API retains details");
+        tests.Check(simulation.GetUISnapshot(true).passengers.empty(), "UI snapshot skips passenger details");
+    });
+
     tests.Run("sequential and parallel fixed-seed equivalence", [&]
     {
         const auto config = TestConfig();

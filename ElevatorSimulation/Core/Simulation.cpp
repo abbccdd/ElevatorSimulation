@@ -552,7 +552,6 @@ SimulationUISnapshot Simulation::GetUISnapshot(bool workerActive) const
     snapshot.elevators = GetElevatorSnapshots();
     snapshot.floors = GetFloorSnapshots();
     snapshot.statistics = GetStatisticsSnapshot();
-    snapshot.passengers = GetPassengerSnapshots();
     snapshot.hallCalls = GetHallCallSnapshots();
     return snapshot;
 }

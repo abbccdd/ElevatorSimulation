@@ -64,7 +64,7 @@ Alighting 进行中时，当前一人仍包含在乘客数和该层下客计数�
 
 评分结果按原电梯容器下标写回数组，待全部 future 完成后，调用 Simulation 的线程仍按 Cost、ETA、距离、任务数、elevatorId 的稳定规则统一比较。线程完成顺序不会进入比较键。动态改派的其他候选和联合分配每层递归中的 N 台候选使用同一批量评分；联合搜索的递归结构、最多三候选、64 叶上限及叶组合最终复评保持串行原样。Simulation 对真实 Elevator/Hall Call 的撤销、添加和移动提交也仍是单线程。
 
-默认直接构造的 Simulation/Dispatcher 使用 Sequential，便于原测试和兼容调用；UI 的 SimulationWorker 显式启用 Parallel。`SetDispatcherExecutionMode(mode, workerCount)` 可指定固定线程数，0 表示使用 `hardware_concurrency-1`（最少 1）。fixed seed 回归在每个仿真秒比较两种模式的电梯、乘客、外呼归属和统计，结果一致。
+默认直接构造的 Simulation/Dispatcher 使用 Sequential，便于原测试和兼容调用；UI 的 SimulationWorker 显式启用 Parallel。`SetDispatcherExecutionMode(mode, workerCount)` 可指定固定线程数；显式非零值保持原值，0 表示使用 `min(hardware_concurrency-1, 8)`（最少 1）。fixed seed 回归在每个仿真秒比较两种模式的电梯、乘客、外呼归属和统计，结果一致。
 
 ### 带滞回的动态重分配
 
@@ -112,14 +112,14 @@ Alighted、外呼释放等模型事件继续置 m_dispatchDirty；改派中的�
 
 每批窗口预筛最多 P×N 次 ScoreSnapshot（P 为当前 pending 数，找到三个 Active 即停止扫描）；随后三请求搜索至多 21N 次前缀候选评分，加至多 192 次叶请求复评。单次 ETA 自身还随已有任务和可上客人数增长。DispatchPlan 的 evaluatedCombinations / scoreEvaluations 仅统计联合搜索，不包含预筛；60 台电梯回归确认单批组合仍不超过 64。一次事件可执行多个批次，64 不是整次事件的上限。每轮改派还需约 H×N 次评分（H 为已分配外呼数），成功改派后重建快照；多批分配期间不重复改派。历史初版约 4 秒跑完 600 仿真秒仅是本机结果，不是实时性能保证。
 
-当前并行评分的独立微基准使用 `Tests/RunDispatchPerformance.ps1 x64`、MSVC `/O2 /MD`、120 层混合 LOOK 任务、每种 N 运行 120 次选择。本机固定池为 15 个线程，结果如下；所有串并行选择序列一致：
+当前并行评分的独立微基准使用 `Tests/RunDispatchPerformance.ps1 x64`、MSVC `/O2 /MD`、120 层混合 LOOK 任务、每种 N 运行 120 次选择。本机使用默认上限 8 个线程，结果如下；所有串并行选择序列一致：
 
 | N | Sequential ms/次 | Parallel ms/次 | 加速比 |
 | ---: | ---: | ---: | ---: |
-| 6 | 0.0729 | 0.0633 | 1.15× |
-| 30 | 0.3680 | 0.1359 | 2.71× |
-| 60 | 0.7259 | 0.2007 | 3.62× |
-| 120 | 1.5493 | 0.3023 | 5.13× |
+| 6 | 0.0709 | 0.0555 | 1.28× |
+| 30 | 0.3765 | 0.1453 | 2.59× |
+| 60 | 0.7661 | 0.1938 | 3.95× |
+| 120 | 1.4911 | 0.3342 | 4.46× |
 
 这是候选评分微基准，不包含 MFC、Snapshot 复制或真实墙钟调度；任务更短、N 更小或核心更少时，线程池调度开销可能抵消收益。
 
@@ -161,7 +161,7 @@ MFC 主线程不再持有或直接调用 Simulation。`SimulationWorker` 的独�
 
 工作线程运行时以 `steady_clock` 每约 16 ms 计算一次真实 delta，再调用原 `Simulation::Update`；核心内部仍只在这一处乘 simulationSpeed。处理 Pause 前会先推进到当前采样点，Pause/Resume/Reset/Start 后立即重置墙钟基点，因此暂停期间等待的真实时间不会进入恢复后的 delta。Stop 唤醒工作线程、发布 `workerActive=false` 的最后快照并 join；线程池也随 Dispatcher 正常 join，不使用 detached thread。
 
-每次命令或推进后，Worker 在自身线程调用 `GetUISnapshot()`，按值复制完整 UI 视图，再通过 C++17 `atomic_store(shared_ptr<const SimulationUISnapshot>)` 发布。MFC 50 ms Timer 只 `atomic_load` 最近快照并更新控件，既不调用 Update，也不扫描或修改 Simulation。共享可写区域仅有短命令队列和最新 shared_ptr，没有给核心各容器增加 mutex。
+每次命令或推进后，Worker 在自身线程调用 `GetUISnapshot()`，按值复制 UI 实际使用的电梯、楼层、Hall Call 和统计视图，再通过 C++17 `atomic_store(shared_ptr<const SimulationUISnapshot>)` 发布。高频 UI 快照不复制 Passenger 明细；测试和后续按需功能继续使用独立 `GetPassengerSnapshots()`。MFC 33 ms Timer 只 `atomic_load` 最近快照并更新控件，既不调用 Update，也不扫描或修改 Simulation。共享可写区域仅有短命令队列和最新 shared_ptr，没有给核心各容器增加 mutex。
 
 UI 只传真实秒；唯一乘倍速的位置是 `Simulation::Update`。本轮最大仿真增量先截断到总时长。每次取以下最小时间间隔，同时推进全部电梯：本轮 Update 剩余时间、下一名乘客到达、各梯下一动作完成时间。
 

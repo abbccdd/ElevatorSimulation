@@ -222,6 +222,7 @@ struct SimulationUISnapshot
     std::vector<ElevatorSnapshot> elevators;
     std::vector<FloorSnapshot> floors;
     StatisticsSnapshot statistics;
+    // 高频 UI 快照不填充乘客明细；按需使用 Simulation::GetPassengerSnapshots()。
     std::vector<PassengerSnapshot> passengers;
     std::vector<HallCallSnapshot> hallCalls;
 };
