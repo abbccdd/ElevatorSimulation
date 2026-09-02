@@ -1,4 +1,5 @@
 #include "Dispatcher.h"
+#include "FixedThreadPool.h"
 
 #include <algorithm>
 #include <cmath>
@@ -8,6 +9,7 @@
 #include <numeric>
 #include <set>
 #include <tuple>
+#include <thread>
 
 namespace
 {
@@ -192,6 +194,39 @@ namespace
     }
 }
 
+ElevatorDispatcher::ElevatorDispatcher() = default;
+
+ElevatorDispatcher::ElevatorDispatcher(DispatcherExecutionMode mode, std::size_t workerCount)
+{
+    SetExecutionMode(mode, workerCount);
+}
+
+ElevatorDispatcher::~ElevatorDispatcher() = default;
+ElevatorDispatcher::ElevatorDispatcher(ElevatorDispatcher&&) noexcept = default;
+ElevatorDispatcher& ElevatorDispatcher::operator=(ElevatorDispatcher&&) noexcept = default;
+
+void ElevatorDispatcher::SetExecutionMode(DispatcherExecutionMode mode, std::size_t workerCount)
+{
+    if (mode == DispatcherExecutionMode::Sequential)
+    {
+        m_threadPool.reset();
+        m_executionMode = mode;
+        return;
+    }
+    if (workerCount == 0)
+    {
+        const auto hardwareThreads = static_cast<std::size_t>(std::thread::hardware_concurrency());
+        workerCount = hardwareThreads > 1 ? hardwareThreads - 1 : 1;
+    }
+    m_threadPool = std::make_unique<FixedThreadPool>(workerCount);
+    m_executionMode = mode;
+}
+
+std::size_t ElevatorDispatcher::GetWorkerCount() const noexcept
+{
+    return m_threadPool ? m_threadPool->GetThreadCount() : 0;
+}
+
 double ElevatorDispatcher::GetAgingBonus(double requestTime, double currentTime) const noexcept
 {
     if (!std::isfinite(requestTime) || !std::isfinite(currentTime) || currentTime <= requestTime)
@@ -216,9 +251,10 @@ int ElevatorDispatcher::SelectFromSnapshots(int requestFloor, Direction requestD
     using Score = std::tuple<double, double, double, std::size_t, int>;
     Score bestScore;
     int selected = InvalidElevatorId;
+    const auto scores = ScoreSnapshots(requestFloor, requestDirection, elevators, requestTime, currentTime);
     for (std::size_t index = 0; index < elevators.size(); ++index)
     {
-        const auto score = ScoreSnapshot(requestFloor, requestDirection, elevators[index], requestTime, currentTime);
+        const auto& score = scores[index];
         if (!score.feasible) continue;
         const auto key = CandidateKey(score, elevators[index], requestFloor);
         if (selected == InvalidElevatorId || key < bestScore)
@@ -228,6 +264,33 @@ int ElevatorDispatcher::SelectFromSnapshots(int requestFloor, Direction requestD
         }
     }
     return selected;
+}
+
+std::vector<DispatchScore> ElevatorDispatcher::ScoreSnapshots(int requestFloor, Direction requestDirection,
+    const std::vector<ElevatorDispatchSnapshot>& elevators, double requestTime, double currentTime) const
+{
+    std::vector<DispatchScore> scores(elevators.size());
+    if (m_executionMode == DispatcherExecutionMode::Sequential || elevators.size() < 2)
+    {
+        for (std::size_t index = 0; index < elevators.size(); ++index)
+            scores[index] = ScoreSnapshot(requestFloor, requestDirection, elevators[index], requestTime, currentTime);
+        return scores;
+    }
+
+    std::vector<std::future<DispatchScore>> futures;
+    futures.reserve(elevators.size());
+    for (std::size_t index = 0; index < elevators.size(); ++index)
+    {
+        futures.push_back(m_threadPool->Submit([this, requestFloor, requestDirection, &elevators,
+            requestTime, currentTime, index]
+        {
+            return ScoreSnapshot(requestFloor, requestDirection, elevators[index], requestTime, currentTime);
+        }));
+    }
+    // 固定按快照下标取回结果；任务完成先后不参与选择或同分排序。
+    for (std::size_t index = 0; index < futures.size(); ++index)
+        scores[index] = futures[index].get();
+    return scores;
 }
 
 DispatchScore ElevatorDispatcher::ScoreSnapshot(int requestFloor, Direction requestDirection,
@@ -311,10 +374,12 @@ int ElevatorDispatcher::SelectReassignment(const HallCallDispatchSnapshot& reque
     Key bestKey;
     double bestEta = std::numeric_limits<double>::infinity();
     int selected = currentElevatorIndex;
+    const auto scores = ScoreSnapshots(request.floor, request.direction, elevators,
+        request.firstRequestTime, currentTime);
     for (std::size_t index = 0; index < elevators.size(); ++index)
     {
         if (index == static_cast<std::size_t>(currentElevatorIndex)) continue;
-        const auto score = ScoreSnapshot(request.floor, request.direction, elevators[index], request.firstRequestTime, currentTime);
+        const auto& score = scores[index];
         if (!score.feasible) continue;
         const auto& snapshot = elevators[index];
         const Key key{score.eta, score.cost,
@@ -398,12 +463,16 @@ DispatchPlan ElevatorDispatcher::PlanAssignments(const std::vector<HallCallDispa
             valid = valid && target >= 1 && GetDirection(request.floor,target)==request.direction;
         std::vector<std::pair<int,DispatchScore>> candidates;
         if (valid)
+        {
+            const auto scores = ScoreSnapshots(request.floor, request.direction, local,
+                request.firstRequestTime, currentTime);
             for (std::size_t index=0;index<local.size();++index)
             {
                 ++result.scoreEvaluations;
-                const auto score=ScoreSnapshot(request.floor,request.direction,local[index],request.firstRequestTime,currentTime);
+                const auto& score=scores[index];
                 if (score.feasible) candidates.emplace_back(static_cast<int>(index),score);
             }
+        }
         std::stable_sort(candidates.begin(),candidates.end(),[&](const auto& a,const auto& b)
         { return CandidateKey(a.second,local[static_cast<std::size_t>(a.first)],request.floor) <
             CandidateKey(b.second,local[static_cast<std::size_t>(b.first)],request.floor); });

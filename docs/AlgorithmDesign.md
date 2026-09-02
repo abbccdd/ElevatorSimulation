@@ -58,6 +58,14 @@ Alighting 进行中时，当前一人仍包含在乘客数和该层下客计数�
 
 验证包含手算成本的上下阈值、真实 Elevator 动作推进对照、108 组混合任务路线、双向经过同层的事件消费，以及 Simulation 真实 FIFO/Boarding 端到端用例。
 
+### Sequential / Parallel 候选评分
+
+`ElevatorDispatcher` 保留 Sequential 和 Parallel 两种执行模式。Parallel 模式只把同一请求对各 `ElevatorDispatchSnapshot` 的 `ScoreSnapshot` 调用提交到一个固定大小的 C++17 线程池；ETA、Cost、feasible 都只读取值快照，任务之间没有共享写入。不会创建“一部电梯一个 OS 线程”，线程池在 Dispatcher 生命周期内复用，析构时停止并 join 全部 worker。
+
+评分结果按原电梯容器下标写回数组，待全部 future 完成后，调用 Simulation 的线程仍按 Cost、ETA、距离、任务数、elevatorId 的稳定规则统一比较。线程完成顺序不会进入比较键。动态改派的其他候选和联合分配每层递归中的 N 台候选使用同一批量评分；联合搜索的递归结构、最多三候选、64 叶上限及叶组合最终复评保持串行原样。Simulation 对真实 Elevator/Hall Call 的撤销、添加和移动提交也仍是单线程。
+
+默认直接构造的 Simulation/Dispatcher 使用 Sequential，便于原测试和兼容调用；UI 的 SimulationWorker 显式启用 Parallel。`SetDispatcherExecutionMode(mode, workerCount)` 可指定固定线程数，0 表示使用 `hardware_concurrency-1`（最少 1）。fixed seed 回归在每个仿真秒比较两种模式的电梯、乘客、外呼归属和统计，结果一致。
+
 ### 带滞回的动态重分配
 
 `ScoreSnapshot` 提供可行性、ETA、Cost 和预计人数，供原选择器、改派和联合分配共用；没有新增第二套 ETA。`SelectReassignment` 先计算原梯评分，再在其他可行候选中按 ETA、Cost、距离、任务数、ID 选择最好者。原梯可行时要求 `CurrentETA - BestETA >= ReassignThresholdSeconds`；原梯预测到请求层无座位时允许立即寻找替代，绕过普通临近锁、冷却和收益阈值，其他梯仍须通过完整容量校验。没有可行替代时保留归属，等待后续事件。
@@ -104,6 +112,17 @@ Alighted、外呼释放等模型事件继续置 m_dispatchDirty；改派中的�
 
 每批窗口预筛最多 P×N 次 ScoreSnapshot（P 为当前 pending 数，找到三个 Active 即停止扫描）；随后三请求搜索至多 21N 次前缀候选评分，加至多 192 次叶请求复评。单次 ETA 自身还随已有任务和可上客人数增长。DispatchPlan 的 evaluatedCombinations / scoreEvaluations 仅统计联合搜索，不包含预筛；60 台电梯回归确认单批组合仍不超过 64。一次事件可执行多个批次，64 不是整次事件的上限。每轮改派还需约 H×N 次评分（H 为已分配外呼数），成功改派后重建快照；多批分配期间不重复改派。历史初版约 4 秒跑完 600 仿真秒仅是本机结果，不是实时性能保证。
 
+当前并行评分的独立微基准使用 `Tests/RunDispatchPerformance.ps1 x64`、MSVC `/O2 /MD`、120 层混合 LOOK 任务、每种 N 运行 120 次选择。本机固定池为 15 个线程，结果如下；所有串并行选择序列一致：
+
+| N | Sequential ms/次 | Parallel ms/次 | 加速比 |
+| ---: | ---: | ---: | ---: |
+| 6 | 0.0729 | 0.0633 | 1.15× |
+| 30 | 0.3680 | 0.1359 | 2.71× |
+| 60 | 0.7259 | 0.2007 | 3.62× |
+| 120 | 1.5493 | 0.3023 | 5.13× |
+
+这是候选评分微基准，不包含 MFC、Snapshot 复制或真实墙钟调度；任务更短、N 更小或核心更少时，线程池调度开销可能抵消收益。
+
 ## 3. Elevator：方向保持与动作事件
 
 沿用原状态，不添加第二套运行枚举：
@@ -138,6 +157,12 @@ stateDiagram-v2
 
 ## 4. Simulation：事件推进与外呼生命周期
 
+MFC 主线程不再持有或直接调用 Simulation。`SimulationWorker` 的独立工作线程构造唯一真实 Simulation，并成为 Elevator、Passenger、Floor、Hall Call、Statistics 与随机数状态的唯一写入者。Start/Pause/Resume/Reset/Stop 是一个互斥量保护的 FIFO 命令队列；队列只传枚举命令，不传核心对象引用。
+
+工作线程运行时以 `steady_clock` 每约 16 ms 计算一次真实 delta，再调用原 `Simulation::Update`；核心内部仍只在这一处乘 simulationSpeed。处理 Pause 前会先推进到当前采样点，Pause/Resume/Reset/Start 后立即重置墙钟基点，因此暂停期间等待的真实时间不会进入恢复后的 delta。Stop 唤醒工作线程、发布 `workerActive=false` 的最后快照并 join；线程池也随 Dispatcher 正常 join，不使用 detached thread。
+
+每次命令或推进后，Worker 在自身线程调用 `GetUISnapshot()`，按值复制完整 UI 视图，再通过 C++17 `atomic_store(shared_ptr<const SimulationUISnapshot>)` 发布。MFC 50 ms Timer 只 `atomic_load` 最近快照并更新控件，既不调用 Update，也不扫描或修改 Simulation。共享可写区域仅有短命令队列和最新 shared_ptr，没有给核心各容器增加 mutex。
+
 UI 只传真实秒；唯一乘倍速的位置是 `Simulation::Update`。本轮最大仿真增量先截断到总时长。每次取以下最小时间间隔，同时推进全部电梯：本轮 Update 剩余时间、下一名乘客到达、各梯下一动作完成时间。
 
 同一时刻先处理全部电梯完成事件（稳定按 ID），再产生到达乘客，最后进行分配和停站处理。每次停站先下后上；开始 Boarding/Alighting 只是登记计时，完成必须等待后续事件。零耗时决策循环不会消耗 S/T，并设有依任务数计算的收敛保护，错误不会被静默忽略。
@@ -169,10 +194,10 @@ Passenger 仍由 Simulation 的注册表按值唯一拥有。同一轮 ID 从 0 
 
 ## 6. 当前边界
 
-没有神经网络、强化学习、遗传算法、粒子群或复杂预测；没有数据库、网络业务或多线程。当前仅使用阈值改派与最多三请求的有限搜索，不含分区停车、峰值交通学习或严格等待时间上界。超出服务能力的持续输入会积压，有限批次则应在足够时长内清空。
+没有神经网络、强化学习、遗传算法、粒子群或复杂预测；没有数据库或网络业务。多线程仅用于 Simulation/UI 所有权隔离和只读候选评分，Elevator 状态机与真实提交仍为单线程。当前仅使用阈值改派与最多三请求的有限搜索，不含分区停车、峰值交通学习或严格等待时间上界。超出服务能力的持续输入会积压，有限批次则应在足够时长内清空。
 
 联合搜索只覆盖最老三个 Active 请求及每个前缀的前三候选，会遗漏截断以外的更优组合；它不优化已分配其他请求的全局总等待。Deferred 只反映当前快照可行性，不保证未来一定能及时服务；预筛还会增加事件内计算量。动态改派优化单个请求的 ETA，可能增加其他乘客等待或旧梯的空驶；距离锁和冷却也可能错过短暂机会。不能同时保证所有样本等待下降、全局最优和常数开销。
 
 ETA 固定本次快照中的已分配任务和已知队列。未来新增乘客、新分配外呼以及剩余队列重分配可能改变路线，因此预测不等于未来实际响应时间。这种局部评分也不保证群控全局最优；有上限的 Aging 不能在持续超载时给出有限等待保证。
 
-UI 仍是初始化快照窗口，不自动启动或持续调用 Update；正式按钮、参数输入和动画由 UI 模块后续实现。核心动态状态已可通过原三类 Snapshot 及新增乘客/外呼快照读取。
+UI 已提供开始、暂停、继续、重置、停止按钮和 Snapshot 定时刷新；参数输入和正式动画仍待后续实现。核心动态状态只通过不可变 `SimulationUISnapshot` 跨线程传给 UI。

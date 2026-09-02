@@ -100,7 +100,6 @@ bool Simulation::Initialize(const SimulationConfig& config, std::uint32_t seed)
         m_seed = seed;
         m_random = std::move(random);
         m_nextArrivalTime = nextArrival;
-        m_dispatcher = ElevatorDispatcher{};
         m_config = config;
         m_currentTime = 0.0;
         m_dispatchDirty = true;
@@ -276,11 +275,8 @@ bool Simulation::DispatchCalls()
         for (auto call : pending)
         {
             auto request = BuildHallCallSnapshot(call->first, call->second);
-            const bool feasible = std::any_of(snapshots.begin(), snapshots.end(), [&](const auto& elevator)
-            {
-                return m_dispatcher.ScoreSnapshot(request.floor, request.direction, elevator,
-                    request.firstRequestTime, m_currentTime).feasible;
-            });
+            const bool feasible = m_dispatcher.SelectFromSnapshots(request.floor, request.direction,
+                snapshots, request.firstRequestTime, m_currentTime) != InvalidElevatorId;
             // 无候选时临时 DeferredCapacity：不占窗口，不改真实队列、时间或队头 ID。
             // 每批用新快照重判，不缓存状态；容量/路线事件仍使用 m_dispatchDirty 触发。
             if (!feasible) continue;
@@ -540,4 +536,23 @@ std::vector<FloorSnapshot> Simulation::GetFloorSnapshots() const
 StatisticsSnapshot Simulation::GetStatisticsSnapshot() const
 {
     return m_statistics.GetSnapshot();
+}
+
+SimulationUISnapshot Simulation::GetUISnapshot(bool workerActive) const
+{
+    SimulationUISnapshot snapshot;
+    snapshot.state = m_state;
+    snapshot.dispatcherMode = m_dispatcher.GetExecutionMode();
+    snapshot.dispatcherWorkerCount = m_dispatcher.GetWorkerCount();
+    snapshot.workerActive = workerActive;
+    snapshot.currentTime = m_currentTime;
+    snapshot.randomSeed = m_seed;
+    snapshot.config = m_config;
+    snapshot.lastError = m_lastError;
+    snapshot.elevators = GetElevatorSnapshots();
+    snapshot.floors = GetFloorSnapshots();
+    snapshot.statistics = GetStatisticsSnapshot();
+    snapshot.passengers = GetPassengerSnapshots();
+    snapshot.hallCalls = GetHallCallSnapshots();
+    return snapshot;
 }

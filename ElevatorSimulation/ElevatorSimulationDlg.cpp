@@ -180,15 +180,11 @@ BOOL CElevatorSimulationDlg::OnInitDialog()
 	config.capacity = 10;
 	config.personTime = 1.0;
 	config.simulationDuration = 300.0;
-	if (!m_simulation.Initialize(config, 42))
-	{
-		CString error = L"默认参数初始化失败：" + Utf8ToCString(m_simulation.GetLastError());
-		AfxMessageBox(error, MB_ICONERROR);
-	}
-	ResetWallClock();
+	m_simulationWorker = std::make_unique<SimulationWorker>(config, 42,
+		DispatcherExecutionMode::Parallel);
 	if (SetTimer(SimulationTimerId, SimulationTimerIntervalMs, nullptr) == 0)
 	{
-		AfxMessageBox(L"无法创建 UI 刷新计时器，仿真不会自动推进。", MB_ICONERROR);
+		AfxMessageBox(L"无法创建 UI 刷新计时器。", MB_ICONERROR);
 	}
 	RefreshSimulationView();
 
@@ -216,11 +212,6 @@ void CElevatorSimulationDlg::InitializeListControls()
 	m_hallCallList.InsertColumn(1, L"方向", LVCFMT_CENTER, 52);
 	m_hallCallList.InsertColumn(2, L"等待", LVCFMT_RIGHT, 65);
 	m_hallCallList.InsertColumn(3, L"归属", LVCFMT_LEFT, 88);
-}
-
-void CElevatorSimulationDlg::ResetWallClock()
-{
-	m_lastWallClock = std::chrono::steady_clock::now();
 }
 
 bool CElevatorSimulationDlg::ReadIntControl(int controlId, const wchar_t* fieldName, int& value)
@@ -298,33 +289,45 @@ void CElevatorSimulationDlg::ShowInputError(const CString& message)
 	AfxMessageBox(message, MB_ICONWARNING);
 }
 
-void CElevatorSimulationDlg::UpdateControlStates()
+void CElevatorSimulationDlg::UpdateControlStates(
+	const std::shared_ptr<const SimulationUISnapshot>& snapshot)
 {
-	const SimulationState state = m_simulation.GetState();
+	const SimulationState state = snapshot ? snapshot->state : SimulationState::Uninitialized;
+	const bool active = snapshot && snapshot->workerActive;
 	const bool ready = state == SimulationState::Ready || state == SimulationState::Uninitialized;
-	GetDlgItem(IDC_BUTTON_START)->EnableWindow(ready);
-	GetDlgItem(IDC_BUTTON_PAUSE)->EnableWindow(state == SimulationState::Running);
-	GetDlgItem(IDC_BUTTON_RESUME)->EnableWindow(state == SimulationState::Paused);
-	GetDlgItem(IDC_BUTTON_RESET)->EnableWindow(state != SimulationState::Uninitialized);
+	GetDlgItem(IDC_BUTTON_START)->EnableWindow(active && ready);
+	GetDlgItem(IDC_BUTTON_PAUSE)->EnableWindow(active && state == SimulationState::Running);
+	GetDlgItem(IDC_BUTTON_RESUME)->EnableWindow(active && state == SimulationState::Paused);
+	GetDlgItem(IDC_BUTTON_RESET)->EnableWindow(active && state != SimulationState::Uninitialized);
 
 	for (int controlId : { IDC_EDIT_FLOOR_COUNT, IDC_EDIT_ELEVATOR_COUNT, IDC_EDIT_CAPACITY,
 		IDC_EDIT_MOVE_TIME, IDC_EDIT_PERSON_TIME, IDC_EDIT_DURATION, IDC_EDIT_PASSENGER_RATE,
 		IDC_EDIT_SPEED, IDC_EDIT_SEED })
 	{
-		GetDlgItem(controlId)->EnableWindow(ready);
+		GetDlgItem(controlId)->EnableWindow(active && ready);
 	}
 }
 
 void CElevatorSimulationDlg::RefreshSimulationView()
 {
-	const auto elevators = m_simulation.GetElevatorSnapshots();
-	const auto floors = m_simulation.GetFloorSnapshots();
-	const auto statistics = m_simulation.GetStatisticsSnapshot();
-	const auto hallCalls = m_simulation.GetHallCallSnapshots();
-	const SimulationConfig config = m_simulation.GetConfig();
-	SetDlgItemTextW(IDC_SIMULATION_STATE, SimulationStateText(m_simulation.GetState()));
+	const auto snapshot = m_simulationWorker ? m_simulationWorker->GetLatestSnapshot() : nullptr;
+	if (!snapshot)
+	{
+		SetDlgItemTextW(IDC_SIMULATION_STATE, L"Initializing / 正在初始化");
+		UpdateControlStates(snapshot);
+		return;
+	}
+	const auto& elevators = snapshot->elevators;
+	const auto& floors = snapshot->floors;
+	const auto& statistics = snapshot->statistics;
+	const auto& hallCalls = snapshot->hallCalls;
+	const auto& config = snapshot->config;
+	CString stateText = snapshot->workerActive ? SimulationStateText(snapshot->state) : L"Stopped / 已停止";
+	if (snapshot->state == SimulationState::Uninitialized && !snapshot->lastError.empty())
+		stateText = L"Error / " + Utf8ToCString(snapshot->lastError);
+	SetDlgItemTextW(IDC_SIMULATION_STATE, stateText);
 	CString modelTime;
-	modelTime.Format(L"Model Time: %.1f / %.1f s", m_simulation.GetCurrentTime(), config.simulationDuration);
+	modelTime.Format(L"Model Time: %.1f / %.1f s", snapshot->currentTime, config.simulationDuration);
 	SetDlgItemTextW(IDC_MODEL_TIME, modelTime);
 
 	if (m_elevatorList.GetItemCount() != static_cast<int>(elevators.size()))
@@ -395,7 +398,7 @@ void CElevatorSimulationDlg::RefreshSimulationView()
 		statistics.arrivedCount, statistics.averageWaitingTime, statistics.averageRideTime,
 		statistics.maxWaitingTime);
 	SetDlgItemTextW(IDC_STATISTICS, summary);
-	UpdateControlStates();
+	UpdateControlStates(snapshot);
 }
 
 void CElevatorSimulationDlg::OnBnClickedStart()
@@ -403,70 +406,46 @@ void CElevatorSimulationDlg::OnBnClickedStart()
 	SimulationConfig config;
 	std::uint32_t seed = 0;
 	if (!ReadConfiguration(config, seed)) return;
-	if (!m_simulation.Initialize(config, seed))
-	{
-		ShowInputError(L"初始化失败：" + Utf8ToCString(m_simulation.GetLastError()));
-		return;
-	}
-	m_simulation.Start();
-	ResetWallClock();
+	if (m_simulationWorker) m_simulationWorker->Stop();
+	m_simulationWorker = std::make_unique<SimulationWorker>(config, seed,
+		DispatcherExecutionMode::Parallel);
+	m_simulationWorker->Start();
 	RefreshSimulationView();
 }
 
 void CElevatorSimulationDlg::OnBnClickedPause()
 {
-	m_simulation.Pause();
-	ResetWallClock();
+	if (m_simulationWorker) m_simulationWorker->Pause();
 	RefreshSimulationView();
 }
 
 void CElevatorSimulationDlg::OnBnClickedResume()
 {
-	m_simulation.Resume();
-	ResetWallClock();
+	if (m_simulationWorker) m_simulationWorker->Resume();
 	RefreshSimulationView();
 }
 
 void CElevatorSimulationDlg::OnBnClickedReset()
 {
-	m_simulation.Reset();
-	if (m_simulation.GetState() != SimulationState::Ready)
-	{
-		// Reset 分配失败时核心保留旧状态；先暂停，避免错误提示停留时间进入下一帧。
-		m_simulation.Pause();
-		ShowInputError(L"重置失败：" + Utf8ToCString(m_simulation.GetLastError()));
-	}
-	ResetWallClock();
+	if (m_simulationWorker) m_simulationWorker->Reset();
 	RefreshSimulationView();
 }
 
 void CElevatorSimulationDlg::OnTimer(UINT_PTR nIDEvent)
 {
 	if (nIDEvent == SimulationTimerId)
-	{
-		const auto now = std::chrono::steady_clock::now();
-		const double realDelta = std::chrono::duration<double>(now - m_lastWallClock).count();
-		m_lastWallClock = now;
-		if (m_simulation.IsRunning())
-		{
-			try
-			{
-				m_simulation.Update(realDelta);
-			}
-			catch (const std::exception& error)
-			{
-				m_simulation.Pause();
-				AfxMessageBox(L"仿真运行失败：" + Utf8ToCString(error.what()), MB_ICONERROR);
-			}
-		}
 		RefreshSimulationView();
-	}
 	CDialogEx::OnTimer(nIDEvent);
 }
 
 void CElevatorSimulationDlg::OnDestroy()
 {
 	KillTimer(SimulationTimerId);
+	if (m_simulationWorker)
+	{
+		m_simulationWorker->Stop();
+		m_simulationWorker.reset();
+	}
 	CDialogEx::OnDestroy();
 }
 
