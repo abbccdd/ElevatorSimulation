@@ -28,5 +28,6 @@ private:
 	std::vector<StatisticsTrendPoint> m_points;
 
 	void DrawChart(CDC& dc, const CRect& bounds, const wchar_t* title, COLORREF color,
-		double (*valueOf)(const StatisticsTrendPoint&)) const;
+		double (*valueOf)(const StatisticsTrendPoint&), bool integerValues = false) const;
+	void DrawOverview(CDC& dc, const CRect& bounds) const;
 };
