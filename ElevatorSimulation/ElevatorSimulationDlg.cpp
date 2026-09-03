@@ -230,7 +230,7 @@ BOOL CElevatorSimulationDlg::OnInitDialog()
 	{
 		AfxMessageBox(L"无法创建 UI 刷新计时器。", MB_ICONERROR);
 	}
-	RefreshSimulationView();
+	RefreshSimulationView(true);
 
 	return TRUE;  // 除非将焦点设置到控件，否则返回 TRUE
 }
@@ -547,7 +547,7 @@ void CElevatorSimulationDlg::OnBnClickedPanelToggle()
 void CElevatorSimulationDlg::OnTcnSelchangePages(NMHDR*, LRESULT* pResult)
 {
 	UpdateTabPageVisibility();
-	if (m_pageTabs.GetCurSel() == 0) RefreshSimulationView();
+	if (m_pageTabs.GetCurSel() == 0) RefreshSimulationView(true);
 	*pResult = 0;
 }
 
@@ -720,13 +720,47 @@ void CElevatorSimulationDlg::UpdateElevatorDetails(
 	m_elevatorDetailBody.SetWindowTextW(details);
 }
 
-void CElevatorSimulationDlg::RefreshSimulationView()
+void CElevatorSimulationDlg::RefreshBuildingView(
+	const std::shared_ptr<const SimulationUISnapshot>& snapshot, bool forceRefresh)
+{
+	if (!m_buildingView.IsWindowVisible()) return;
+
+	const bool largeScaleMode = snapshot &&
+		(snapshot->config.floorCount > 80 || snapshot->elevators.size() > 30);
+	const bool modeChanged = m_buildingRefreshScheduled &&
+		largeScaleMode != m_lastBuildingLargeScaleMode;
+	const auto now = std::chrono::steady_clock::now();
+	const auto interval = std::chrono::milliseconds(largeScaleMode
+		? LargeBuildingRefreshMs : NormalBuildingRefreshMs);
+	if (!forceRefresh && !modeChanged && m_buildingRefreshScheduled &&
+		now < m_nextBuildingRefresh)
+	{
+		return;
+	}
+
+	m_buildingView.SetSnapshot(snapshot);
+	if (forceRefresh || modeChanged || !m_buildingRefreshScheduled)
+	{
+		m_nextBuildingRefresh = now + interval;
+	}
+	else
+	{
+		do
+		{
+			m_nextBuildingRefresh += interval;
+		} while (m_nextBuildingRefresh <= now);
+	}
+	m_buildingRefreshScheduled = true;
+	m_lastBuildingLargeScaleMode = largeScaleMode;
+}
+
+void CElevatorSimulationDlg::RefreshSimulationView(bool forceBuildingRefresh)
 {
 	const auto snapshot = m_simulationWorker ? m_simulationWorker->GetLatestSnapshot() : nullptr;
 	if (!snapshot)
 	{
 		SetDlgItemTextW(IDC_SIMULATION_STATE, L"Initializing / 正在初始化");
-		m_buildingView.SetSnapshot(nullptr);
+		RefreshBuildingView(snapshot, forceBuildingRefresh);
 		UpdateElevatorDetails(snapshot);
 		UpdateControlStates(snapshot);
 		return;
@@ -753,7 +787,7 @@ void CElevatorSimulationDlg::RefreshSimulationView()
 		UpdateSpeedDisplay(config.simulationSpeed);
 	}
 
-	m_buildingView.SetSnapshot(snapshot);
+	RefreshBuildingView(snapshot, forceBuildingRefresh);
 	UpdateElevatorDetails(snapshot);
 
 	if (m_pageTabs.GetCurSel() == 0 && m_rightPanelExpanded &&
@@ -802,25 +836,25 @@ void CElevatorSimulationDlg::OnBnClickedStart()
 	m_simulationWorker = std::make_unique<SimulationWorker>(config, seed,
 		DispatcherExecutionMode::Parallel);
 	m_simulationWorker->Start();
-	RefreshSimulationView();
+	RefreshSimulationView(true);
 }
 
 void CElevatorSimulationDlg::OnBnClickedPause()
 {
 	if (m_simulationWorker) m_simulationWorker->Pause();
-	RefreshSimulationView();
+	RefreshSimulationView(true);
 }
 
 void CElevatorSimulationDlg::OnBnClickedResume()
 {
 	if (m_simulationWorker) m_simulationWorker->Resume();
-	RefreshSimulationView();
+	RefreshSimulationView(true);
 }
 
 void CElevatorSimulationDlg::OnBnClickedReset()
 {
 	if (m_simulationWorker) m_simulationWorker->Reset();
-	RefreshSimulationView();
+	RefreshSimulationView(true);
 }
 
 void CElevatorSimulationDlg::OnTimer(UINT_PTR nIDEvent)

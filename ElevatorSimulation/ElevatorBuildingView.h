@@ -4,6 +4,7 @@
 
 #include <afxwin.h>
 
+#include <chrono>
 #include <memory>
 #include <vector>
 
@@ -34,7 +35,17 @@ private:
 		CRect rect;
 	};
 
+	struct ElevatorVisualState
+	{
+		double visualFloor = 1.0;
+		double targetFloor = 1.0;
+		double speedFloorsPerSecond = 0.0;
+	};
+
 	std::shared_ptr<const SimulationUISnapshot> m_snapshot;
+	std::vector<ElevatorVisualState> m_elevatorVisualStates;
+	std::chrono::steady_clock::time_point m_lastAnimationUpdate;
+	bool m_animationClockInitialized = false;
 	int m_selectedGroup = -1;
 	int m_selectedElevatorId = InvalidElevatorId;
 	int m_visibleFloorMin = 1;
@@ -54,10 +65,16 @@ private:
 	void DrawFloorScale(CDC& dc, const CRect& plot) const;
 	void DrawZoomControls(CDC& dc, const CRect& content);
 	int FloorY(int floor, const CRect& plot) const;
+	int FloorY(double floor, const CRect& plot) const;
 	int FloorAtY(int y, const CRect& plot) const;
 	int FloorLabelStep() const;
+	bool IsLargeScaleMode() const;
 	CString GroupName(int groupIndex) const;
 	CString VisibleFloorText() const;
+	double VisualFloor(int elevatorId) const;
+	void AdvanceVisualPositions(std::chrono::steady_clock::time_point now);
+	void InitializeVisualPositions(std::chrono::steady_clock::time_point now);
+	void UpdateVisualTargets();
 	void FitAllFloors();
 	void ZoomIn();
 	void ZoomOut();

@@ -44,11 +44,23 @@ BOOL ElevatorBuildingView::Create(CWnd* parent, UINT controlId)
 
 void ElevatorBuildingView::SetSnapshot(std::shared_ptr<const SimulationUISnapshot> snapshot)
 {
+	const auto now = std::chrono::steady_clock::now();
 	const std::size_t previousElevatorCount = m_snapshot ? m_snapshot->elevators.size() : 0;
 	const int previousFloorCount = m_snapshot ? m_snapshot->config.floorCount : 0;
+	const bool configurationChanged = !m_snapshot || !snapshot ||
+		m_snapshot->config.floorCount != snapshot->config.floorCount ||
+		m_snapshot->elevators.size() != snapshot->elevators.size();
+	const bool simulationRestarted = m_snapshot && snapshot &&
+		(snapshot->currentTime < m_snapshot->currentTime ||
+			(snapshot->state == SimulationState::Ready &&
+				m_snapshot->state != SimulationState::Ready));
+	if (!configurationChanged && !simulationRestarted)
+		AdvanceVisualPositions(now);
 	m_snapshot = std::move(snapshot);
 	if (!m_snapshot)
 	{
+		m_elevatorVisualStates.clear();
+		m_animationClockInitialized = false;
 		Invalidate(FALSE);
 		return;
 	}
@@ -59,6 +71,10 @@ void ElevatorBuildingView::SetSnapshot(std::shared_ptr<const SimulationUISnapsho
 	}
 	if (m_snapshot->config.floorCount != previousFloorCount)
 		FitAllFloors();
+	if (configurationChanged || simulationRestarted)
+		InitializeVisualPositions(now);
+	else
+		UpdateVisualTargets();
 	if (!m_snapshot->elevators.empty())
 	{
 		const bool selectedElevatorExists = std::any_of(m_snapshot->elevators.begin(),
@@ -83,6 +99,7 @@ void ElevatorBuildingView::OnPaint()
 	CRect client;
 	GetClientRect(&client);
 	if (client.IsRectEmpty()) return;
+	AdvanceVisualPositions(std::chrono::steady_clock::now());
 
 	CDC bufferDc;
 	bufferDc.CreateCompatibleDC(&paintDc);
@@ -143,7 +160,12 @@ void ElevatorBuildingView::DrawView(CDC& dc, const CRect& client)
 
 int ElevatorBuildingView::FloorY(int floor, const CRect& plot) const
 {
-	const double position = static_cast<double>(floor - m_visibleFloorMin) /
+	return FloorY(static_cast<double>(floor), plot);
+}
+
+int ElevatorBuildingView::FloorY(double floor, const CRect& plot) const
+{
+	const double position = (floor - static_cast<double>(m_visibleFloorMin)) /
 		static_cast<double>(m_visibleFloorMax - m_visibleFloorMin);
 	return plot.bottom - static_cast<int>(std::lround(position * plot.Height()));
 }
@@ -166,30 +188,113 @@ int ElevatorBuildingView::FloorLabelStep() const
 	return 10;
 }
 
+bool ElevatorBuildingView::IsLargeScaleMode() const
+{
+	return m_snapshot->config.floorCount > 80 || m_snapshot->elevators.size() > 30;
+}
+
+double ElevatorBuildingView::VisualFloor(int elevatorId) const
+{
+	return m_elevatorVisualStates[static_cast<std::size_t>(elevatorId)].visualFloor;
+}
+
+void ElevatorBuildingView::AdvanceVisualPositions(std::chrono::steady_clock::time_point now)
+{
+	if (!m_animationClockInitialized)
+	{
+		m_lastAnimationUpdate = now;
+		m_animationClockInitialized = true;
+		return;
+	}
+
+	const double elapsedSeconds = std::chrono::duration<double>(
+		now - m_lastAnimationUpdate).count();
+	m_lastAnimationUpdate = now;
+	if (!m_snapshot || m_snapshot->state == SimulationState::Paused ||
+		m_snapshot->state == SimulationState::Ready ||
+		m_snapshot->state == SimulationState::Uninitialized)
+	{
+		return;
+	}
+
+	for (auto& visualState : m_elevatorVisualStates)
+	{
+		const double remaining = visualState.targetFloor - visualState.visualFloor;
+		const double step = visualState.speedFloorsPerSecond * elapsedSeconds;
+		if (std::abs(remaining) <= step)
+		{
+			visualState.visualFloor = visualState.targetFloor;
+			visualState.speedFloorsPerSecond = 0.0;
+		}
+		else
+		{
+			visualState.visualFloor += std::copysign(step, remaining);
+		}
+	}
+}
+
+void ElevatorBuildingView::InitializeVisualPositions(
+	std::chrono::steady_clock::time_point now)
+{
+	m_elevatorVisualStates.assign(m_snapshot->elevators.size(), ElevatorVisualState{});
+	for (const auto& elevator : m_snapshot->elevators)
+	{
+		auto& visualState = m_elevatorVisualStates[static_cast<std::size_t>(elevator.id)];
+		visualState.visualFloor = static_cast<double>(elevator.currentFloor);
+		visualState.targetFloor = visualState.visualFloor;
+	}
+	m_lastAnimationUpdate = now;
+	m_animationClockInitialized = true;
+}
+
+void ElevatorBuildingView::UpdateVisualTargets()
+{
+	for (const auto& elevator : m_snapshot->elevators)
+	{
+		auto& visualState = m_elevatorVisualStates[static_cast<std::size_t>(elevator.id)];
+		const double targetFloor = static_cast<double>(elevator.currentFloor);
+		if (visualState.targetFloor == targetFloor) continue;
+
+		visualState.targetFloor = targetFloor;
+		const double distance = std::abs(targetFloor - visualState.visualFloor);
+		const double durationSeconds = distance <= 1.0
+			? 0.15 : (std::max)(0.06, 0.15 / distance);
+		visualState.speedFloorsPerSecond = distance / durationSeconds;
+	}
+}
+
 void ElevatorBuildingView::DrawFloorScale(CDC& dc, const CRect& plot) const
 {
-	const int floorCount = m_snapshot->config.floorCount;
-	std::vector<std::size_t> upWaiting(static_cast<std::size_t>(floorCount + 1), 0);
-	std::vector<std::size_t> downWaiting(static_cast<std::size_t>(floorCount + 1), 0);
-	for (const auto& floor : m_snapshot->floors)
+	const int visibleFloorCount = m_visibleFloorMax - m_visibleFloorMin + 1;
+	std::vector<std::size_t> upWaiting(static_cast<std::size_t>(visibleFloorCount), 0);
+	std::vector<std::size_t> downWaiting(static_cast<std::size_t>(visibleFloorCount), 0);
+	for (int floor = m_visibleFloorMin; floor <= m_visibleFloorMax; ++floor)
 	{
-		upWaiting[static_cast<std::size_t>(floor.floorNumber)] = floor.upWaitingCount;
-		downWaiting[static_cast<std::size_t>(floor.floorNumber)] = floor.downWaitingCount;
+		const auto& floorSnapshot = m_snapshot->floors[static_cast<std::size_t>(floor - 1)];
+		const std::size_t index = static_cast<std::size_t>(floor - m_visibleFloorMin);
+		upWaiting[index] = floorSnapshot.upWaitingCount;
+		downWaiting[index] = floorSnapshot.downWaitingCount;
 	}
 	for (const auto& hallCall : m_snapshot->hallCalls)
 	{
+		if (hallCall.floorNumber < m_visibleFloorMin ||
+			hallCall.floorNumber > m_visibleFloorMax)
+		{
+			continue;
+		}
+		const std::size_t index = static_cast<std::size_t>(
+			hallCall.floorNumber - m_visibleFloorMin);
 		auto& waiting = hallCall.direction == Direction::Up
-			? upWaiting[static_cast<std::size_t>(hallCall.floorNumber)]
-			: downWaiting[static_cast<std::size_t>(hallCall.floorNumber)];
+			? upWaiting[index] : downWaiting[index];
 		waiting = (std::max)(waiting, hallCall.waitingCount);
 	}
 
 	const int labelStep = FloorLabelStep();
-	const int visibleFloorCount = m_visibleFloorMax - m_visibleFloorMin + 1;
 	for (int floor = m_visibleFloorMin; floor <= m_visibleFloorMax; ++floor)
 	{
-		const std::size_t upCount = upWaiting[static_cast<std::size_t>(floor)];
-		const std::size_t downCount = downWaiting[static_cast<std::size_t>(floor)];
+		const std::size_t index = static_cast<std::size_t>(floor - m_visibleFloorMin);
+		const std::size_t upCount = upWaiting[index];
+		const std::size_t downCount = downWaiting[index];
 		const bool active = upCount > 0 || downCount > 0;
 		const bool major = floor == m_visibleFloorMin || floor == m_visibleFloorMax ||
 			floor % labelStep == 0;
@@ -337,6 +442,7 @@ void ElevatorBuildingView::DrawDetailed(CDC& dc, const CRect& content,
 	CRect plot(content.left + 108, content.top + 48, content.right - 8, content.bottom - 28);
 	m_floorScaleHitRect.SetRect(content.left, plot.top, plot.left, plot.bottom);
 	DrawFloorScale(dc, plot);
+	const bool largeScaleMode = IsLargeScaleMode();
 	const int shaftWidth = plot.Width() / elevatorCount;
 	for (int localIndex = 0; localIndex < elevatorCount; ++localIndex)
 	{
@@ -370,15 +476,16 @@ void ElevatorBuildingView::DrawDetailed(CDC& dc, const CRect& content,
 		dc.MoveTo(centerX, plot.top);
 		dc.LineTo(centerX, plot.bottom);
 		dc.SelectObject(previousPen);
-		if (elevator.currentFloor < m_visibleFloorMin ||
-			elevator.currentFloor > m_visibleFloorMax)
+		const double visualFloor = VisualFloor(elevator.id);
+		if (visualFloor < static_cast<double>(m_visibleFloorMin) ||
+			visualFloor > static_cast<double>(m_visibleFloorMax))
 		{
 			continue;
 		}
 
 		const int carWidth = (std::max)(26, (std::min)(64, shaftRight - shaftLeft - 8));
 		const int carHeight = 42;
-		int carTop = FloorY(elevator.currentFloor, plot) - carHeight / 2;
+		int carTop = FloorY(visualFloor, plot) - carHeight / 2;
 		carTop = (std::max)(static_cast<int>(plot.top),
 			(std::min)(carTop, static_cast<int>(plot.bottom) - carHeight));
 		CRect car(centerX - carWidth / 2, carTop,
@@ -386,8 +493,16 @@ void ElevatorBuildingView::DrawDetailed(CDC& dc, const CRect& content,
 		dc.FillSolidRect(car, selected ? AccentColor : AccentFillColor);
 		dc.Draw3dRect(car, AccentColor, AccentColor);
 		CString carText;
-		carText.Format(L"%dF %s\n%d/%d", elevator.currentFloor,
-			DirectionText(elevator.direction), elevator.passengerCount, elevator.capacity);
+		const wchar_t* movementText = DirectionText(elevator.direction);
+		if (selected && elevator.state == ElevatorState::Boarding)
+			movementText = L"Boarding";
+		else if (selected && elevator.state == ElevatorState::Alighting)
+			movementText = L"Alighting";
+		if (largeScaleMode && !selected)
+			carText = movementText;
+		else
+			carText.Format(L"%dF %s\n%d/%d", elevator.currentFloor,
+				movementText, elevator.passengerCount, elevator.capacity);
 		CRect carTextRect = car;
 		dc.SetTextColor(selected ? SurfaceColor : TextColor);
 		dc.DrawText(carText, carTextRect, DT_CENTER | DT_VCENTER);
@@ -450,14 +565,15 @@ void ElevatorBuildingView::DrawOverview(CDC& dc, const CRect& content)
 		{
 			const auto& elevator = m_snapshot->elevators[
 				static_cast<std::size_t>(firstElevator + localIndex)];
-			if (elevator.currentFloor < m_visibleFloorMin ||
-				elevator.currentFloor > m_visibleFloorMax)
+			const double visualFloor = VisualFloor(elevator.id);
+			if (visualFloor < static_cast<double>(m_visibleFloorMin) ||
+				visualFloor > static_cast<double>(m_visibleFloorMax))
 			{
 				continue;
 			}
 			const int markerX = count == 1 ? groupRect.CenterPoint().x
 				: markerAreaLeft + localIndex * markerAreaWidth / (count - 1);
-			const int markerY = FloorY(elevator.currentFloor, plot);
+			const int markerY = FloorY(visualFloor, plot);
 			const bool selected = elevator.id == m_selectedElevatorId;
 			CRect marker(markerX - (selected ? 5 : 3), markerY - (selected ? 6 : 4),
 				markerX + (selected ? 6 : 4), markerY + (selected ? 7 : 5));

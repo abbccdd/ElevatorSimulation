@@ -8,6 +8,7 @@
 #include "ElevatorBuildingView.h"
 
 #include <array>
+#include <chrono>
 #include <memory>
 
 
@@ -58,6 +59,8 @@ protected:
 private:
 	static constexpr UINT_PTR SimulationTimerId = 1;
 	static constexpr UINT SimulationTimerIntervalMs = 33;
+	static constexpr int NormalBuildingRefreshMs = 33;
+	static constexpr int LargeBuildingRefreshMs = 50;
 
 	std::unique_ptr<SimulationWorker> m_simulationWorker;
 	CListCtrl m_elevatorList;
@@ -92,6 +95,9 @@ private:
 	std::array<CStatic, 6> m_statValues;
 	bool m_uiReady = false;
 	bool m_rightPanelExpanded = true;
+	bool m_buildingRefreshScheduled = false;
+	bool m_lastBuildingLargeScaleMode = false;
+	std::chrono::steady_clock::time_point m_nextBuildingRefresh;
 
 	void CreateUIFramework();
 	void InitializeListControls();
@@ -106,5 +112,7 @@ private:
 	bool ReadDoubleControl(int controlId, const wchar_t* fieldName, double& value);
 	void ShowInputError(const CString& message);
 	void UpdateControlStates(const std::shared_ptr<const SimulationUISnapshot>& snapshot);
-	void RefreshSimulationView();
+	void RefreshBuildingView(const std::shared_ptr<const SimulationUISnapshot>& snapshot,
+		bool forceRefresh);
+	void RefreshSimulationView(bool forceBuildingRefresh = false);
 };
