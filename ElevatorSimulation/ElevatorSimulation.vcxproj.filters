@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
     <Filter Include="源文件">
@@ -15,10 +15,16 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="ElevatorBuildingView.h">
+      <Filter>UI</Filter>
+    </ClInclude>
     <ClInclude Include="ElevatorSimulation.h">
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="ElevatorSimulationDlg.h">
+      <Filter>UI</Filter>
+    </ClInclude>
+    <ClInclude Include="StatisticsTrendView.h">
       <Filter>UI</Filter>
     </ClInclude>
     <ClInclude Include="framework.h">
@@ -35,10 +41,16 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="ElevatorBuildingView.cpp">
+      <Filter>UI</Filter>
+    </ClCompile>
     <ClCompile Include="ElevatorSimulation.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="ElevatorSimulationDlg.cpp">
+      <Filter>UI</Filter>
+    </ClCompile>
+    <ClCompile Include="StatisticsTrendView.cpp">
       <Filter>UI</Filter>
     </ClCompile>
     <ClCompile Include="pch.cpp">
@@ -90,7 +102,13 @@
     <ClInclude Include="Core\Dispatcher.h">
       <Filter>Core</Filter>
     </ClInclude>
+    <ClInclude Include="Core\FixedThreadPool.h">
+      <Filter>Core</Filter>
+    </ClInclude>
     <ClInclude Include="Core\Simulation.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="Core\SimulationWorker.h">
       <Filter>Core</Filter>
     </ClInclude>
     <ClInclude Include="Statistics\Statistics.h">
@@ -108,7 +126,13 @@
     <ClCompile Include="Core\Dispatcher.cpp">
       <Filter>Core</Filter>
     </ClCompile>
+    <ClCompile Include="Core\FixedThreadPool.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
     <ClCompile Include="Core\Simulation.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="Core\SimulationWorker.cpp">
       <Filter>Core</Filter>
     </ClCompile>
     <ClCompile Include="Statistics\Statistics.cpp">
@@ -140,10 +164,34 @@
     <None Include="..\Tests\SimulationTests.cpp">
       <Filter>Development</Filter>
     </None>
+    <None Include="..\Tests\ConcurrencyTests.cpp">
+      <Filter>Development</Filter>
+    </None>
+    <None Include="..\Tests\DispatchPerformance.cpp">
+      <Filter>Development</Filter>
+    </None>
+    <None Include="..\Tests\RunDispatchPerformance.ps1">
+      <Filter>Development</Filter>
+    </None>
     <None Include="..\Tests\RunCoreTests.cmd">
       <Filter>Development</Filter>
     </None>
     <None Include="..\docs\AlgorithmDesign.md">
+      <Filter>Development</Filter>
+    </None>
+    <None Include="..\Demo\AlgorithmDemo.cpp">
+      <Filter>Development</Filter>
+    </None>
+    <None Include="..\Demo\GetAlgorithmDemoFingerprint.ps1">
+      <Filter>Development</Filter>
+    </None>
+    <None Include="..\Demo\RunAlgorithmDemo.cmd">
+      <Filter>Development</Filter>
+    </None>
+    <None Include="..\docs\AlgorithmDemoGuide.md">
+      <Filter>Development</Filter>
+    </None>
+    <None Include="..\启动算法演示.bat">
       <Filter>Development</Filter>
     </None>
   </ItemGroup>

@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <string>
 #include <vector>
 
 // 唯一公共契约：核心、统计和 UI 必须共用这些定义。
@@ -39,6 +40,20 @@ enum class SimulationState
     Finished
 };
 
+enum class DispatcherExecutionMode
+{
+    Sequential,
+    Parallel
+};
+
+enum class TrafficPattern
+{
+    Uniform,
+    UpPeak,
+    DownPeak,
+    InterFloor
+};
+
 using PassengerId = int;
 inline constexpr int InvalidElevatorId = -1;
 inline constexpr PassengerId InvalidPassengerId = -1;
@@ -55,6 +70,7 @@ struct SimulationConfig
     // 全楼每仿真秒平均到达人数，Poisson 到达；0 关闭随机产生。
     double passengerRate = 0.2;
     double simulationSpeed = 1.0;
+    TrafficPattern trafficPattern = TrafficPattern::Uniform;
 };
 
 // 相同楼层返回 Idle；这不代表相同起终点的乘客合法。
@@ -134,6 +150,29 @@ struct DispatchScore
     int projectedOccupancy = 0;
 };
 
+// 单个外呼的只读评分观察结果。仅用于展示，不参与调度提交。
+struct DispatchCandidateObservation
+{
+    int elevatorId = InvalidElevatorId;
+    bool feasible = false;
+    double cost = std::numeric_limits<double>::infinity();
+    double eta = std::numeric_limits<double>::infinity();
+    int projectedOccupancy = 0;
+};
+
+struct DispatchObservationSnapshot
+{
+    bool valid = false;
+    int floor = 1;
+    Direction direction = Direction::Idle;
+    std::size_t waitingCount = 0;
+    double firstRequestTime = 0.0;
+    double currentTime = 0.0;
+    int assignedElevatorId = InvalidElevatorId;
+    // feasible、Cost、ETA、elevatorId 顺序，保留全部候选供 UI 取 Top 10 和当前归属。
+    std::vector<DispatchCandidateObservation> candidates;
+};
+
 struct DispatchPlan
 {
     // 与传入请求顺序一致，值为电梯容器下标；-1 表示本批未分配。
@@ -199,4 +238,23 @@ struct StatisticsSnapshot
     double maxWaitingTime = 0.0;
     double averageRideTime = 0.0;
     std::vector<ElevatorStatisticsSnapshot> elevators;
+};
+
+// UI 只读取这一份按值构造的完整视图，不接触 Simulation 的可写状态。
+struct SimulationUISnapshot
+{
+    SimulationState state = SimulationState::Uninitialized;
+    DispatcherExecutionMode dispatcherMode = DispatcherExecutionMode::Sequential;
+    std::size_t dispatcherWorkerCount = 0;
+    bool workerActive = false;
+    double currentTime = 0.0;
+    std::uint32_t randomSeed = 0;
+    SimulationConfig config;
+    std::string lastError;
+    std::vector<ElevatorSnapshot> elevators;
+    std::vector<FloorSnapshot> floors;
+    StatisticsSnapshot statistics;
+    // 高频 UI 快照不填充乘客明细；按需使用 Simulation::GetPassengerSnapshots()。
+    std::vector<PassengerSnapshot> passengers;
+    std::vector<HallCallSnapshot> hallCalls;
 };

@@ -191,16 +191,20 @@
     </ResourceCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="ElevatorBuildingView.h" />
     <ClInclude Include="ElevatorSimulation.h" />
     <ClInclude Include="ElevatorSimulationDlg.h" />
+    <ClInclude Include="StatisticsTrendView.h" />
     <ClInclude Include="framework.h" />
     <ClInclude Include="pch.h" />
     <ClInclude Include="Resource.h" />
     <ClInclude Include="targetver.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="ElevatorBuildingView.cpp" />
     <ClCompile Include="ElevatorSimulation.cpp" />
     <ClCompile Include="ElevatorSimulationDlg.cpp" />
+    <ClCompile Include="StatisticsTrendView.cpp" />
     <ClCompile Include="pch.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
@@ -223,7 +227,9 @@
     <ClInclude Include="Core\Floor.h" />
     <ClInclude Include="Core\Elevator.h" />
     <ClInclude Include="Core\Dispatcher.h" />
+    <ClInclude Include="Core\FixedThreadPool.h" />
     <ClInclude Include="Core\Simulation.h" />
+    <ClInclude Include="Core\SimulationWorker.h" />
     <ClInclude Include="Statistics\Statistics.h" />
     <ClCompile Include="Core\Passenger.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
@@ -237,7 +243,13 @@
     <ClCompile Include="Core\Dispatcher.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="Core\FixedThreadPool.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="Core\Simulation.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="Core\SimulationWorker.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="Statistics\Statistics.cpp">
@@ -258,7 +270,15 @@
     <None Include="..\Tests\DispatcherTests.cpp" />
     <None Include="..\Tests\ElevatorTests.cpp" />
     <None Include="..\Tests\SimulationTests.cpp" />
+    <None Include="..\Tests\ConcurrencyTests.cpp" />
+    <None Include="..\Tests\DispatchPerformance.cpp" />
+    <None Include="..\Tests\RunDispatchPerformance.ps1" />
     <None Include="..\Tests\RunCoreTests.cmd" />
     <None Include="..\docs\AlgorithmDesign.md" />
+    <None Include="..\Demo\AlgorithmDemo.cpp" />
+    <None Include="..\Demo\GetAlgorithmDemoFingerprint.ps1" />
+    <None Include="..\Demo\RunAlgorithmDemo.cmd" />
+    <None Include="..\docs\AlgorithmDemoGuide.md" />
+    <None Include="..\启动算法演示.bat" />
   </ItemGroup>
 </Project>

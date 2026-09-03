@@ -112,6 +112,9 @@ namespace
             invalid.passengerRate = value;
             reject(invalid);
         }
+        auto invalidPattern = valid;
+        invalidPattern.trafficPattern = static_cast<TrafficPattern>(999);
+        reject(invalidPattern);
         auto noPassengers = valid;
         noPassengers.passengerRate = 0.0;
         Check(simulation.Initialize(noPassengers) && simulation.GetLastError().empty(),

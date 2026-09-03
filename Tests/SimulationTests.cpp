@@ -1,6 +1,7 @@
 #include "Core/Simulation.h"
 #include "TestSupport.h"
 #include <algorithm>
+#include <array>
 #include <limits>
 
 namespace
@@ -14,6 +15,54 @@ namespace
         config.passengerRate = 0.0;
         config.simulationDuration = 100.0;
         return config;
+    }
+
+    constexpr std::array<TrafficPattern, 4> TrafficPatterns = {
+        TrafficPattern::Uniform, TrafficPattern::UpPeak,
+        TrafficPattern::DownPeak, TrafficPattern::InterFloor
+    };
+
+    SimulationConfig TrafficConfig(TrafficPattern pattern, double passengerRate = 300.0)
+    {
+        SimulationConfig config;
+        config.floorCount = 20;
+        config.elevatorCount = 6;
+        config.capacity = 15;
+        config.moveTimePerFloor = 100.0;
+        config.personTime = 100.0;
+        config.simulationDuration = 1.0;
+        config.passengerRate = passengerRate;
+        config.trafficPattern = pattern;
+        return config;
+    }
+
+    std::vector<PassengerSnapshot> RunTraffic(
+        TrafficPattern pattern, std::uint32_t seed, double passengerRate = 300.0)
+    {
+        Simulation simulation;
+        if (!simulation.Initialize(TrafficConfig(pattern, passengerRate), seed))
+            throw std::runtime_error("traffic fixture initialization failed");
+        simulation.Start();
+        simulation.Update(1.0);
+        const auto passengers = simulation.GetPassengerSnapshots();
+        if (passengers.size() != simulation.GetStatisticsSnapshot().totalPassengerCount)
+            throw std::runtime_error("traffic fixture unexpectedly completed a passenger");
+        return passengers;
+    }
+
+    void SamePassengerSequence(TestSuite& tests,
+        const std::vector<PassengerSnapshot>& left, const std::vector<PassengerSnapshot>& right)
+    {
+        tests.Check(left.size()==right.size(),"same generated passenger count");
+        for(std::size_t i=0;i<left.size();++i)
+        {
+            tests.Check(left[i].id==right[i].id && left[i].startFloor==right[i].startFloor &&
+                left[i].targetFloor==right[i].targetFloor && left[i].state==right[i].state &&
+                left[i].elevatorId==right[i].elevatorId,"same generated passenger fields");
+            tests.Near(left[i].requestTime,right[i].requestTime,"same generated request time");
+            tests.Near(left[i].boardTime,right[i].boardTime,"same generated board time");
+            tests.Near(left[i].arrivalTime,right[i].arrivalTime,"same generated arrival time");
+        }
     }
 
     Simulation FullUpFleet()
@@ -83,6 +132,28 @@ namespace
             tests.Check(ha[i].floorNumber==hb[i].floorNumber && ha[i].direction==hb[i].direction &&
                 ha[i].assignedElevatorId==hb[i].assignedElevatorId && ha[i].waitingCount==hb[i].waitingCount,
                 "same request ownership");
+    }
+
+    void SameObservation(TestSuite& tests, const DispatchObservationSnapshot& left,
+        const DispatchObservationSnapshot& right)
+    {
+        tests.Check(left.valid==right.valid && left.floor==right.floor && left.direction==right.direction &&
+            left.waitingCount==right.waitingCount && left.assignedElevatorId==right.assignedElevatorId,
+            "same observation request");
+        tests.Near(left.firstRequestTime,right.firstRequestTime,"same observation request time");
+        tests.Near(left.currentTime,right.currentTime,"same observation current time");
+        tests.Check(left.candidates.size()==right.candidates.size(),"same observation candidate count");
+        for(std::size_t i=0;i<left.candidates.size();++i)
+        {
+            const auto& a=left.candidates[i]; const auto& b=right.candidates[i];
+            tests.Check(a.elevatorId==b.elevatorId && a.feasible==b.feasible &&
+                a.projectedOccupancy==b.projectedOccupancy,"same observation candidate");
+            if(a.feasible)
+            {
+                tests.Near(a.cost,b.cost,"same observation cost");
+                tests.Near(a.eta,b.eta,"same observation ETA");
+            }
+        }
     }
 }
 
@@ -248,6 +319,66 @@ int main()
         people[0].targetFloor=999; calls[0].assignedElevatorId=999;
         tests.Check(simulation.GetPassengerSnapshots()[0].targetFloor==3 &&
             simulation.GetHallCallSnapshots()[0].assignedElevatorId==-1,"copy isolation");
+    });
+    tests.Run("uniform preserves legacy fixed-seed route sequence", [&] {
+        tests.Check(SimulationConfig{}.trafficPattern==TrafficPattern::Uniform,"default traffic is uniform");
+        const auto passengers=RunTraffic(TrafficPattern::Uniform,123456u,50.0);
+        const std::array<std::pair<int,int>,12> expected = {{
+            {11,20},{6,15},{16,8},{7,13},{7,17},{3,4},
+            {2,9},{9,20},{19,17},{17,4},{4,6},{16,3}
+        }};
+        tests.Check(passengers.size()==48,"legacy uniform generated count");
+        for(std::size_t i=0;i<expected.size();++i)
+            tests.Check(passengers[i].startFloor==expected[i].first &&
+                passengers[i].targetFloor==expected[i].second,"legacy uniform route");
+    });
+    tests.Run("traffic patterns follow route distributions", [&] {
+        for(const auto pattern:TrafficPatterns)
+        {
+            const auto passengers=RunTraffic(pattern,20260903u);
+            tests.Check(passengers.size()>200,"enough fixed-seed traffic samples");
+            for(const auto& passenger:passengers)
+                tests.Check(passenger.startFloor!=passenger.targetFloor,"traffic route floors differ");
+
+            const auto count=static_cast<double>(passengers.size());
+            if(pattern==TrafficPattern::UpPeak)
+            {
+                const auto lobbyStarts=std::count_if(passengers.begin(),passengers.end(),
+                    [](const auto& passenger) { return passenger.startFloor==1; });
+                tests.Check(lobbyStarts/count>0.65,"up peak has a clear majority from 1F");
+            }
+            else if(pattern==TrafficPattern::DownPeak)
+            {
+                const auto lobbyTargets=std::count_if(passengers.begin(),passengers.end(),
+                    [](const auto& passenger) { return passenger.targetFloor==1; });
+                tests.Check(lobbyTargets/count>0.65,"down peak has a clear majority to 1F");
+            }
+            else if(pattern==TrafficPattern::InterFloor)
+            {
+                const auto avoidsLobby=std::count_if(passengers.begin(),passengers.end(),
+                    [](const auto& passenger)
+                    { return passenger.startFloor!=1 && passenger.targetFloor!=1; });
+                tests.Check(avoidsLobby/count>0.80,"inter-floor traffic clearly avoids 1F");
+            }
+        }
+    });
+    tests.Run("all traffic patterns replay seed and reset", [&] {
+        for(const auto pattern:TrafficPatterns)
+        {
+            const auto config=TrafficConfig(pattern,80.0);
+            Simulation first,second;
+            tests.Check(first.Initialize(config,4567u) && second.Initialize(config,4567u),
+                "initialize matching traffic simulations");
+            first.Start(); second.Start(); first.Update(1.0); second.Update(1.0);
+            SameState(tests,first,second);
+            const auto expectedPassengers=second.GetPassengerSnapshots();
+            SamePassengerSequence(tests,first.GetPassengerSnapshots(),expectedPassengers);
+            first.Reset();
+            tests.Check(first.GetConfig().trafficPattern==pattern,"reset preserves traffic pattern");
+            first.Start(); first.Update(1.0);
+            SameState(tests,first,second);
+            SamePassengerSequence(tests,first.GetPassengerSnapshots(),expectedPassengers);
+        }
     });
     tests.Run("fixed seed replay", [&] {
         auto config=Config(); config.passengerRate=0.4;
@@ -490,6 +621,68 @@ int main()
         a.Update(100);
         for(int frame=0;frame<800;++frame) b.Update(0.125);
         SameState(tests,a,b);
+    });
+    tests.Run("dispatch observation is read-only and reuses dispatcher scoring", [&] {
+        const auto config=Config(); Simulation simulation;
+        tests.Check(simulation.Initialize(config,42),"initialize observation fixture");
+        tests.Check(simulation.AddPassenger(2,6)!=InvalidPassengerId,"add observed request");
+        const auto beforeUI=simulation.GetUISnapshot();
+        const auto beforePeople=simulation.GetPassengerSnapshots();
+        const auto observation=simulation.GetDispatchObservation(2,Direction::Up);
+        tests.Check(observation.valid && observation.floor==2 && observation.direction==Direction::Up &&
+            observation.waitingCount==1 && observation.assignedElevatorId==InvalidElevatorId,
+            "observation identifies real unassigned hall call");
+        tests.Check(observation.candidates.size()==3,"observation scores complete fleet");
+
+        ElevatorDispatcher dispatcher;
+        const int starts[]={1,6,3};
+        for(int id=0;id<3;++id)
+        {
+            Elevator elevator(id,starts[id],config);
+            const auto expected=dispatcher.ScoreSnapshot(2,Direction::Up,elevator.GetDispatchSnapshot(),0,0);
+            const auto actual=std::find_if(observation.candidates.begin(),observation.candidates.end(),
+                [id](const auto& candidate) { return candidate.elevatorId==id; });
+            tests.Check(actual!=observation.candidates.end() && actual->feasible==expected.feasible &&
+                actual->projectedOccupancy==expected.projectedOccupancy,"observation candidate matches score");
+            tests.Near(actual->cost,expected.cost,"observation cost matches ScoreSnapshot");
+            tests.Near(actual->eta,expected.eta,"observation ETA matches ScoreSnapshot");
+        }
+
+        const auto afterUI=simulation.GetUISnapshot();
+        const auto afterPeople=simulation.GetPassengerSnapshots();
+        tests.Check(beforeUI.state==afterUI.state && beforeUI.currentTime==afterUI.currentTime &&
+            beforeUI.randomSeed==afterUI.randomSeed && beforeUI.elevators.size()==afterUI.elevators.size() &&
+            beforeUI.floors.size()==afterUI.floors.size() && beforeUI.hallCalls.size()==afterUI.hallCalls.size() &&
+            beforeUI.statistics.totalPassengerCount==afterUI.statistics.totalPassengerCount &&
+            beforeUI.statistics.waitingCount==afterUI.statistics.waitingCount &&
+            beforeUI.statistics.ridingCount==afterUI.statistics.ridingCount &&
+            beforeUI.statistics.arrivedCount==afterUI.statistics.arrivedCount &&
+            beforePeople.size()==afterPeople.size(),"observation preserves public simulation state");
+        for(std::size_t i=0;i<beforeUI.elevators.size();++i)
+            tests.Check(beforeUI.elevators[i].currentFloor==afterUI.elevators[i].currentFloor &&
+                beforeUI.elevators[i].direction==afterUI.elevators[i].direction &&
+                beforeUI.elevators[i].state==afterUI.elevators[i].state &&
+                beforeUI.elevators[i].passengerCount==afterUI.elevators[i].passengerCount,
+                "observation preserves elevator state");
+        tests.Check(beforePeople[0].id==afterPeople[0].id && beforePeople[0].state==afterPeople[0].state &&
+            beforePeople[0].elevatorId==afterPeople[0].elevatorId &&
+            beforePeople[0].requestTime==afterPeople[0].requestTime,
+            "observation preserves passenger state");
+        tests.Check(simulation.ValidateState(),"state valid after observation");
+    });
+    tests.Run("dispatch observation is mode-independent and invalid when absent", [&] {
+        const auto config=Config(); Simulation sequential,parallel;
+        parallel.SetDispatcherExecutionMode(DispatcherExecutionMode::Parallel,2);
+        tests.Check(sequential.Initialize(config,73) && parallel.Initialize(config,73),
+            "initialize observation modes");
+        sequential.AddPassenger(5,1); parallel.AddPassenger(5,1);
+        const auto left=sequential.GetDispatchObservation(5,Direction::Down);
+        const auto right=parallel.GetDispatchObservation(5,Direction::Down);
+        SameObservation(tests,left,right);
+        tests.Check(!sequential.GetDispatchObservation(4,Direction::Up).valid,
+            "missing hall call observation is invalid");
+        tests.Check(!sequential.GetDispatchObservation(5,Direction::Idle).valid,
+            "invalid direction observation is invalid");
     });
     return tests.Finish();
 }
