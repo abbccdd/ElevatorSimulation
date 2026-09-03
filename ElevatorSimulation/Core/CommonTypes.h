@@ -46,6 +46,14 @@ enum class DispatcherExecutionMode
     Parallel
 };
 
+enum class TrafficPattern
+{
+    Uniform,
+    UpPeak,
+    DownPeak,
+    InterFloor
+};
+
 using PassengerId = int;
 inline constexpr int InvalidElevatorId = -1;
 inline constexpr PassengerId InvalidPassengerId = -1;
@@ -62,6 +70,7 @@ struct SimulationConfig
     // 全楼每仿真秒平均到达人数，Poisson 到达；0 关闭随机产生。
     double passengerRate = 0.2;
     double simulationSpeed = 1.0;
+    TrafficPattern trafficPattern = TrafficPattern::Uniform;
 };
 
 // 相同楼层返回 Idle；这不代表相同起终点的乘客合法。

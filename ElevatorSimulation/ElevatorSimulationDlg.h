@@ -82,6 +82,7 @@ private:
 	CListCtrl m_elevatorList;
 	CListCtrl m_floorList;
 	CListCtrl m_hallCallList;
+	CComboBox m_trafficPatternCombo;
 	CFont m_titleFont;
 	CFont m_sectionFont;
 	CFont m_statValueFont;
@@ -107,7 +108,7 @@ private:
 	CStatic m_parameterSection;
 	CStatic m_controlSection;
 	CStatic m_speedSection;
-	std::array<CStatic, 9> m_parameterLabels;
+	std::array<CStatic, 10> m_parameterLabels;
 	std::array<CButton, 4> m_speedButtons;
 	std::array<CStatic, 6> m_statCards;
 	std::array<CStatic, 6> m_statTitles;

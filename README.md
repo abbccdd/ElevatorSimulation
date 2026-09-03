@@ -79,7 +79,7 @@ ElevatorSimulation/
 - `PassengerState`：Waiting、Riding、Arrived。
 - `ElevatorState`：Idle、MovingUp、MovingDown、Boarding、Alighting、Stopped。
 - `SimulationState`：Uninitialized、Ready、Running、Paused、Finished，用于总控制器生命周期。
-- `SimulationConfig`：L/N/K、S 秒/层、T 秒/人、总时长、全楼到达速率、仿真倍速。
+- `SimulationConfig`：L/N/K、S 秒/层、T 秒/人、总时长、全楼到达速率、仿真倍速与 `TrafficPattern` 客流模式；模式默认 `Uniform`。
 - `PassengerId`、`InvalidPassengerId=-1`、`InvalidElevatorId=-1`、`UnsetTime=-1.0`。
 - 原 `ElevatorSnapshot`、`FloorSnapshot`、`StatisticsSnapshot`、`ElevatorStatisticsSnapshot`；新增只读调度、乘客、外呼快照、UI 高频视图 `SimulationUISnapshot`，以及单梯动作事件，不重新定义原状态类型。
 - 无状态函数 `GetDirection(startFloor, targetFloor)`；同层返回 Idle，但同层起终点的乘客仍属非法。
@@ -140,7 +140,7 @@ Snapshot 按值构造：`SimulationWorker` 将 UI 所需的 `SimulationUISnapsho
 | `SimulationWorker::GetLatestSnapshot()` | UI 线程原子读取最近发布的不可变快照 |
 | `SimulationWorker::{ObserveHallCall,ClearObservedHallCall,GetLatestObservation}` | Worker 线程最多约 5Hz 计算并原子发布只读观察快照 |
 
-初始化要求：`floorCount >= 2`，`elevatorCount > 0 && elevatorCount % 3 == 0`，`capacity > 0`，S/T/总时长/倍速均为**有限正数**，`passengerRate` 为**有限非负数**。拒绝 NaN、正负无穷。K=10~20、S=1~5、T=2~10 是背景中的典型范围，当前不将其作为硬性上限。零速率关闭随机生成。passengerRate 为全楼每仿真秒的平均到达人数，采用指数间隔的单人 Poisson 到达；起终点均匀取样且不相同。
+初始化要求：`floorCount >= 2`，`elevatorCount > 0 && elevatorCount % 3 == 0`，`capacity > 0`，S/T/总时长/倍速均为**有限正数**，`passengerRate` 为**有限非负数**，`trafficPattern` 为四个已定义枚举值之一。拒绝 NaN、正负无穷。K=10~20、S=1~5、T=2~10 是背景中的典型范围，当前不将其作为硬性上限。零速率关闭随机生成。passengerRate 为全楼每仿真秒的平均到达人数，仍采用指数间隔的单人 Poisson 到达；`Uniform` 均匀选择不同起终点，`UpPeak` 以 75% 概率从 1F 去往 2~L，`DownPeak` 以 75% 概率从 2~L 去往 1F，`InterFloor` 在 L>=3 时以 90% 概率从 2~L 选择不同起终点（L=2 回退 Uniform）。所有抽样共用本轮单一 `mt19937`。
 
 参数不合法时 `Initialize` 返回 false，不抛参数异常，保留上一次有效参数、容器、时钟和运行状态。创建容器时的 `bad_alloc` / `length_error` 也转换为失败诊断，不故意设置未经约定的参数上限；极端规模仍受机器内存限制。`Reset` 为 void，如分配失败会保留旧状态，调用者可检查 `GetLastError()`。
 
@@ -261,7 +261,7 @@ Hall Call 动态改派只由新乘客、到层、上下客完成和零耗时状�
 
 当前主对话框已经打通“输入参数 → Start → 实时运行与显示 → Pause/Resume → Finished → Reset”的最小完整链路，界面保持原生 MFC 风格，暂不包含主题、自绘、图片或复杂动画。
 
-- 参数区提供楼层数 L、电梯数 N、容量 K、每层运行时间 S、每人上下客时间 T、总时长、全楼乘客产生率、仿真倍速与固定 seed。UI 只做严格的字符串/数值转换，参数范围和 N 为 3 的正倍数等规则仍由工作线程中的 `Simulation::Initialize` 统一校验，失败信息通过 Snapshot 显示。
+- 参数区提供楼层数 L、电梯数 N、容量 K、每层运行时间 S、每人上下客时间 T、总时长、全楼乘客产生率、客流模式、仿真倍速与固定 seed。客流模式下拉框依次为均匀随机、上行高峰、下行高峰、层间交通；与其他参数一样，仅在 Ready 时可修改，Start 时写入 `SimulationConfig::trafficPattern`。UI 只做严格的字符串/数值转换，参数范围和 N 为 3 的正倍数等规则仍由工作线程中的 `Simulation::Initialize` 统一校验，失败信息通过 Snapshot 显示。
 - 控制区提供开始、暂停、继续和重置。按钮及参数编辑框随 `Ready`、`Running`、`Paused`、`Finished` 状态启用或禁用；Finished 保留最终快照，必须 Reset 后才能开始下一轮。
 - 对话框使用 33 ms MFC Timer，只读取最新 `SimulationUISnapshot` 并更新控件。真实时间采样和 `Simulation::Update(realDelta)` 只在 SimulationWorker 中发生；Start、Pause、Resume、Reset 命令都会重设工作线程的墙钟基准。
 - UI 从一份不可变快照读取电梯、楼层、Hall Call 和统计。电梯列表显示 E1~EN、真实楼层、方向、动作状态和载客量；楼层列表按高层到低层显示上下行等待；Hall Call 列表显示等待人数和归属；统计区显示模型时间、生成/等待/乘梯/到达人数及平均等待、平均乘梯、最大等待。

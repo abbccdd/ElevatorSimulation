@@ -3,6 +3,7 @@
 #include "TestSupport.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <memory>
 #include <stdexcept>
@@ -152,6 +153,35 @@ int main()
             SameState(tests, sequential, parallel);
         }
         tests.Check(sequential.ValidateState() && parallel.ValidateState(), "both final states valid");
+    });
+
+    tests.Run("all traffic patterns keep sequential and parallel equivalent", [&]
+    {
+        constexpr std::array<TrafficPattern, 4> patterns = {
+            TrafficPattern::Uniform, TrafficPattern::UpPeak,
+            TrafficPattern::DownPeak, TrafficPattern::InterFloor
+        };
+        for (const auto pattern : patterns)
+        {
+            auto config = TestConfig();
+            config.simulationDuration = 30.0;
+            config.trafficPattern = pattern;
+            Simulation sequential;
+            Simulation parallel;
+            parallel.SetDispatcherExecutionMode(DispatcherExecutionMode::Parallel, 4);
+            tests.Check(sequential.Initialize(config, 20260903), "initialize patterned sequential");
+            tests.Check(parallel.Initialize(config, 20260903), "initialize patterned parallel");
+            sequential.Start();
+            parallel.Start();
+            for (int step = 0; step < 30; ++step)
+            {
+                sequential.Update(1.0);
+                parallel.Update(1.0);
+                SameState(tests, sequential, parallel);
+            }
+            tests.Check(sequential.ValidateState() && parallel.ValidateState(),
+                "patterned sequential and parallel states valid");
+        }
     });
 
     tests.Run("pause resume resets wall clock", [&]

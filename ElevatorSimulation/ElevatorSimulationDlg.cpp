@@ -23,13 +23,13 @@ namespace
 	constexpr int ParameterControlIds[] = {
 		IDC_EDIT_FLOOR_COUNT, IDC_EDIT_ELEVATOR_COUNT, IDC_EDIT_CAPACITY,
 		IDC_EDIT_MOVE_TIME, IDC_EDIT_PERSON_TIME, IDC_EDIT_PASSENGER_RATE,
-		IDC_EDIT_DURATION, IDC_EDIT_SEED, IDC_EDIT_SPEED
+		IDC_COMBO_TRAFFIC_PATTERN, IDC_EDIT_DURATION, IDC_EDIT_SEED, IDC_EDIT_SPEED
 	};
 
 	constexpr const wchar_t* ParameterLabels[] = {
 		L"楼层数 L", L"电梯数量 N", L"容量 K", L"每层时间 S (s)",
-		L"上下客时间 T (s)", L"客流率 (人/仿真秒)", L"总时长 (s)",
-		L"随机种子 seed", L"仿真倍速"
+		L"上下客时间 T (s)", L"客流率 (人/仿真秒)", L"客流模式",
+		L"总时长 (s)", L"随机种子 seed", L"仿真倍速"
 	};
 
 	constexpr const wchar_t* StatisticTitles[] = {
@@ -278,6 +278,11 @@ void CElevatorSimulationDlg::CreateUIFramework()
 	m_parameterSection.SetFont(&m_sectionFont);
 	m_controlSection.SetFont(&m_sectionFont);
 	m_speedSection.SetFont(&m_sectionFont);
+	m_trafficPatternCombo.Create(WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL |
+		CBS_DROPDOWNLIST, CRect(), this, IDC_COMBO_TRAFFIC_PATTERN);
+	for (const wchar_t* item : { L"均匀随机", L"上行高峰", L"下行高峰", L"层间交通" })
+		m_trafficPatternCombo.AddString(item);
+	m_trafficPatternCombo.SetCurSel(0);
 
 	for (std::size_t index = 0; index < m_parameterLabels.size(); ++index)
 	{
@@ -410,7 +415,8 @@ void CElevatorSimulationDlg::RelayoutUI()
 	{
 		const int rowY = firstRowY + static_cast<int>(index) * rowHeight;
 		place(m_parameterLabels[index], leftInnerX, rowY, labelWidth - 6, 22);
-		move(ParameterControlIds[index], editX, rowY, editWidth, 22);
+		move(ParameterControlIds[index], editX, rowY, editWidth,
+			ParameterControlIds[index] == IDC_COMBO_TRAFFIC_PATTERN ? 120 : 22);
 	}
 
 	const int controlsY = firstRowY + static_cast<int>(m_parameterLabels.size()) * rowHeight + 8;
@@ -700,6 +706,13 @@ bool CElevatorSimulationDlg::ReadConfiguration(SimulationConfig& config, std::ui
 	{
 		return false;
 	}
+	const int trafficPattern = m_trafficPatternCombo.GetCurSel();
+	if (trafficPattern < 0 || trafficPattern > static_cast<int>(TrafficPattern::InterFloor))
+	{
+		ShowInputError(L"请选择有效的客流模式。");
+		return false;
+	}
+	config.trafficPattern = static_cast<TrafficPattern>(trafficPattern);
 
 	CString seedText;
 	GetDlgItemTextW(IDC_EDIT_SEED, seedText);
@@ -734,9 +747,7 @@ void CElevatorSimulationDlg::UpdateControlStates(
 	GetDlgItem(IDC_BUTTON_RESUME)->EnableWindow(active && state == SimulationState::Paused);
 	GetDlgItem(IDC_BUTTON_RESET)->EnableWindow(active && state != SimulationState::Uninitialized);
 
-	for (int controlId : { IDC_EDIT_FLOOR_COUNT, IDC_EDIT_ELEVATOR_COUNT, IDC_EDIT_CAPACITY,
-		IDC_EDIT_MOVE_TIME, IDC_EDIT_PERSON_TIME, IDC_EDIT_DURATION, IDC_EDIT_PASSENGER_RATE,
-		IDC_EDIT_SPEED, IDC_EDIT_SEED })
+	for (int controlId : ParameterControlIds)
 	{
 		GetDlgItem(controlId)->EnableWindow(active && ready);
 	}

@@ -12,18 +12,69 @@
 
 namespace
 {
+    constexpr double PeakTrafficShare = 0.75;
+    constexpr double InterFloorTrafficShare = 0.90;
+
     bool IsPositiveFinite(double value)
     {
         return std::isfinite(value) && value > 0.0;
+    }
+
+    double NextUnitRandom(std::mt19937& random)
+    {
+        return (static_cast<double>(random()) + 0.5) / 4294967296.0;
     }
 
     double NextArrivalTime(double now, double rate, std::mt19937& random)
     {
         if (rate == 0.0) return std::numeric_limits<double>::infinity();
         // U 严格在 (0,1)，指数间隔 -ln(U)/lambda；一轮中不按帧重新抽样。
-        const double uniform = (static_cast<double>(random()) + 0.5) / 4294967296.0;
+        const double uniform = NextUnitRandom(random);
         const double next = now - std::log(uniform) / rate;
         return next > now ? next : std::nextafter(now, std::numeric_limits<double>::infinity());
+    }
+
+    bool DrawProbability(double probability, std::mt19937& random)
+    {
+        return NextUnitRandom(random) < probability;
+    }
+
+    std::pair<int, int> GenerateUniformRoute(int floorCount, std::mt19937& random)
+    {
+        const int start = std::uniform_int_distribution<int>(1, floorCount)(random);
+        int target = std::uniform_int_distribution<int>(1, floorCount - 1)(random);
+        if (target >= start) ++target; // 均匀选择除起点外的 L-1 层，不使用随机重试。
+        return { start, target };
+    }
+
+    std::pair<int, int> GeneratePassengerRoute(
+        TrafficPattern pattern, int floorCount, std::mt19937& random)
+    {
+        switch (pattern)
+        {
+        case TrafficPattern::UpPeak:
+            if (DrawProbability(PeakTrafficShare, random))
+                return { 1, std::uniform_int_distribution<int>(2, floorCount)(random) };
+            break;
+        case TrafficPattern::DownPeak:
+            if (DrawProbability(PeakTrafficShare, random))
+                return { std::uniform_int_distribution<int>(2, floorCount)(random), 1 };
+            break;
+        case TrafficPattern::InterFloor:
+            // L=2 时 2~L 只有一层，无法构造不同起终点，因此回退为 Uniform。
+            if (floorCount >= 3 && DrawProbability(InterFloorTrafficShare, random))
+            {
+                const int start = std::uniform_int_distribution<int>(2, floorCount)(random);
+                int target = std::uniform_int_distribution<int>(2, floorCount - 1)(random);
+                if (target >= start) ++target;
+                return { start, target };
+            }
+            break;
+        case TrafficPattern::Uniform:
+            break;
+        }
+        // Uniform 保留原有随机调用顺序，默认配置的固定 seed 轨迹不变。
+        return GenerateUniformRoute(floorCount, random);
     }
 
     // 返回静态错误文字，空指针表示有效；不依赖 CString 或窗口。
@@ -45,6 +96,16 @@ namespace
             return "simulationSpeed must be finite and > 0";
         if (!std::isfinite(config.passengerRate) || config.passengerRate < 0.0)
             return "passengerRate must be finite and >= 0";
+        switch (config.trafficPattern)
+        {
+        case TrafficPattern::Uniform:
+        case TrafficPattern::UpPeak:
+        case TrafficPattern::DownPeak:
+        case TrafficPattern::InterFloor:
+            break;
+        default:
+            return "trafficPattern is invalid";
+        }
         return nullptr;
     }
 }
@@ -214,9 +275,8 @@ void Simulation::GenerateDuePassengers()
 {
     while (m_nextArrivalTime <= m_currentTime && m_nextArrivalTime < m_config.simulationDuration)
     {
-        const int start = std::uniform_int_distribution<int>(1, m_config.floorCount)(m_random);
-        int target = std::uniform_int_distribution<int>(1, m_config.floorCount - 1)(m_random);
-        if (target >= start) ++target; // 均匀选择除起点外的 L-1 层，不使用随机重试。
+        const auto [start, target] = GeneratePassengerRoute(
+            m_config.trafficPattern, m_config.floorCount, m_random);
         if (AddPassenger(start, target) == InvalidPassengerId)
             throw std::overflow_error("Passenger ID space exhausted");
         m_nextArrivalTime = NextArrivalTime(m_nextArrivalTime, m_config.passengerRate, m_random);

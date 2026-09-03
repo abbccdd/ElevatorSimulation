@@ -17,6 +17,7 @@
 #define IDC_EDIT_PASSENGER_RATE         1006
 #define IDC_EDIT_SPEED                  1007
 #define IDC_EDIT_SEED                   1008
+#define IDC_COMBO_TRAFFIC_PATTERN       1009
 #define IDC_BUTTON_START                1010
 #define IDC_BUTTON_PAUSE                1011
 #define IDC_BUTTON_RESUME               1012
@@ -49,7 +50,7 @@
 #define IDC_BUTTON_SPEED_5              1062
 #define IDC_BUTTON_SPEED_10             1063
 #define IDC_PARAMETER_LABEL_FIRST       1070
-#define IDC_PARAMETER_LABEL_LAST        1078
+#define IDC_PARAMETER_LABEL_LAST        1079
 #define IDC_STAT_CARD_FIRST             1080
 #define IDC_STAT_CARD_LAST              1085
 #define IDC_STAT_TITLE_FIRST            1090
