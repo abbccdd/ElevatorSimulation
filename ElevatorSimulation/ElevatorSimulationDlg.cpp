@@ -161,6 +161,7 @@ BEGIN_MESSAGE_MAP(CElevatorSimulationDlg, CDialogEx)
 	ON_BN_CLICKED(IDC_BUTTON_PANEL_TOGGLE, &CElevatorSimulationDlg::OnBnClickedPanelToggle)
 	ON_NOTIFY(TCN_SELCHANGE, IDC_TAB_PAGES, &CElevatorSimulationDlg::OnTcnSelchangePages)
 	ON_NOTIFY(TCN_SELCHANGE, IDC_TAB_RIGHT, &CElevatorSimulationDlg::OnTcnSelchangeRightTabs)
+	ON_NOTIFY(NM_CLICK, IDC_LIST_HALL_CALLS, &CElevatorSimulationDlg::OnNMClickHallCallList)
 	ON_MESSAGE(WM_ELEVATOR_SELECTION_CHANGED,
 		&CElevatorSimulationDlg::OnElevatorSelectionChanged)
 END_MESSAGE_MAP()
@@ -303,8 +304,8 @@ void CElevatorSimulationDlg::CreateUIFramework()
 	m_elevatorDetailTitle.SetFont(&m_sectionFont);
 	m_elevatorDetailBody.Create(L"请在中央视图选择一台电梯",
 		WS_CHILD | WS_VISIBLE | SS_LEFT, CRect(), this, IDC_RIGHT_ELEVATOR_DETAILS);
-	m_algorithmPlaceholder.Create(L"选择 Hall Call 后将在后续显示\r\nETA / Cost / feasible",
-		WS_CHILD | WS_VISIBLE | WS_BORDER | SS_CENTER | SS_CENTERIMAGE,
+	m_algorithmPlaceholder.Create(L"请在 Hall Call 页选择一个请求",
+		WS_CHILD | WS_VISIBLE | WS_BORDER | SS_LEFT,
 		CRect(), this, IDC_RIGHT_ALGORITHM_PLACEHOLDER);
 
 	m_pageTabs.Create(WS_CHILD | WS_VISIBLE | WS_TABSTOP | TCS_TABS | TCS_SINGLELINE,
@@ -315,6 +316,14 @@ void CElevatorSimulationDlg::CreateUIFramework()
 	m_pageTabs.SetCurSel(0);
 	m_pagePlaceholder.Create(L"", WS_CHILD | WS_BORDER | SS_CENTER | SS_CENTERIMAGE,
 		CRect(), this, IDC_PAGE_PLACEHOLDER);
+	m_statisticsTrendView.Create(this, IDC_STATISTICS_TREND_VIEW);
+	m_statisticsTrendView.SetFont(GetFont());
+	m_algorithmPageSummary.Create(L"请在实时监控页的 Hall Call 列表中选择一个请求",
+		WS_CHILD | WS_BORDER | SS_LEFT | SS_CENTERIMAGE, CRect(), this,
+		IDC_ALGORITHM_PAGE_SUMMARY);
+	m_algorithmCandidateList.Create(WS_CHILD | WS_BORDER | WS_TABSTOP | LVS_REPORT |
+		LVS_SINGLESEL | LVS_SHOWSELALWAYS | LVS_NOSORTHEADER, CRect(), this,
+		IDC_LIST_ALGORITHM_CANDIDATES);
 
 	for (std::size_t index = 0; index < m_statCards.size(); ++index)
 	{
@@ -446,8 +455,26 @@ void CElevatorSimulationDlg::RelayoutUI()
 	}
 	else
 	{
-		place(m_pagePlaceholder, centerX, contentTop,
-			clientWidth - margin - centerX, mainHeight);
+		const int pageWidth = clientWidth - margin - centerX;
+		if (m_pageTabs.GetCurSel() == 1)
+		{
+			place(m_statisticsTrendView, centerX, contentTop, pageWidth, mainHeight);
+		}
+		else
+		{
+			place(m_algorithmPageSummary, centerX, contentTop, pageWidth, 64);
+			place(m_algorithmCandidateList, centerX, contentTop + 72,
+				pageWidth, mainHeight - 72);
+			if (m_algorithmCandidateList.GetHeaderCtrl() != nullptr)
+			{
+				m_algorithmCandidateList.SetColumnWidth(0, toDevice(pageWidth * 10 / 100));
+				m_algorithmCandidateList.SetColumnWidth(1, toDevice(pageWidth * 12 / 100));
+				m_algorithmCandidateList.SetColumnWidth(2, toDevice(pageWidth * 12 / 100));
+				m_algorithmCandidateList.SetColumnWidth(3, toDevice(pageWidth * 12 / 100));
+				m_algorithmCandidateList.SetColumnWidth(4, toDevice(pageWidth * 14 / 100));
+				m_algorithmCandidateList.SetColumnWidth(5, toDevice(pageWidth * 36 / 100));
+			}
+		}
 	}
 
 	place(m_pageTabs, centerX, mainBottom + gap, centerWidth, tabsHeight);
@@ -475,7 +502,8 @@ void CElevatorSimulationDlg::RelayoutUI()
 
 void CElevatorSimulationDlg::UpdateTabPageVisibility()
 {
-	const bool realTimePage = m_pageTabs.GetCurSel() == 0;
+	const int page = m_pageTabs.GetCurSel();
+	const bool realTimePage = page == 0;
 	const int realTimeCommand = realTimePage ? SW_SHOW : SW_HIDE;
 	for (CWnd* control : { static_cast<CWnd*>(&m_mainPanel), static_cast<CWnd*>(&m_rightPanel),
 		static_cast<CWnd*>(&m_panelToggle), static_cast<CWnd*>(&m_buildingView) })
@@ -483,13 +511,10 @@ void CElevatorSimulationDlg::UpdateTabPageVisibility()
 		control->ShowWindow(realTimeCommand);
 	}
 	UpdateRightPanelVisibility();
-	m_pagePlaceholder.ShowWindow(realTimePage ? SW_HIDE : SW_SHOW);
-	if (!realTimePage)
-	{
-		m_pagePlaceholder.SetWindowTextW(m_pageTabs.GetCurSel() == 1
-			? L"统计分析页面结构已预留，本轮不接入图表。"
-			: L"算法观察页面结构已预留，本轮不接入调度可视化。");
-	}
+	m_pagePlaceholder.ShowWindow(SW_HIDE);
+	m_statisticsTrendView.ShowWindow(page == 1 ? SW_SHOW : SW_HIDE);
+	m_algorithmPageSummary.ShowWindow(page == 2 ? SW_SHOW : SW_HIDE);
+	m_algorithmCandidateList.ShowWindow(page == 2 ? SW_SHOW : SW_HIDE);
 	RelayoutUI();
 }
 
@@ -547,7 +572,12 @@ void CElevatorSimulationDlg::OnBnClickedPanelToggle()
 void CElevatorSimulationDlg::OnTcnSelchangePages(NMHDR*, LRESULT* pResult)
 {
 	UpdateTabPageVisibility();
-	if (m_pageTabs.GetCurSel() == 0) RefreshSimulationView(true);
+	if (m_pageTabs.GetCurSel() == 0)
+		RefreshSimulationView(true);
+	else if (m_pageTabs.GetCurSel() == 1)
+		UpdateStatisticsTrend(m_simulationWorker ? m_simulationWorker->GetLatestSnapshot() : nullptr, true);
+	else
+		RefreshObservationViews(true);
 	*pResult = 0;
 }
 
@@ -556,6 +586,24 @@ void CElevatorSimulationDlg::OnTcnSelchangeRightTabs(NMHDR*, LRESULT* pResult)
 	UpdateRightPanelVisibility();
 	RelayoutUI();
 	RefreshSimulationView();
+	if (m_rightTabs.GetCurSel() == 2) RefreshObservationViews(true);
+	*pResult = 0;
+}
+
+void CElevatorSimulationDlg::OnNMClickHallCallList(NMHDR* pNMHDR, LRESULT* pResult)
+{
+	if (!m_rebuildingHallCallList)
+	{
+		const auto* activate = reinterpret_cast<NMITEMACTIVATE*>(pNMHDR);
+		if (activate->iItem >= 0)
+		{
+			const DWORD_PTR data = m_hallCallList.GetItemData(activate->iItem);
+			HallCallIdentity identity;
+			identity.floor = static_cast<int>(data >> 1);
+			identity.direction = (data & 1) != 0 ? Direction::Up : Direction::Down;
+			SelectHallCall(identity);
+		}
+	}
 	*pResult = 0;
 }
 
@@ -574,6 +622,8 @@ void CElevatorSimulationDlg::InitializeListControls()
 	m_elevatorList.SetExtendedStyle(m_elevatorList.GetExtendedStyle() | extendedStyle);
 	m_floorList.SetExtendedStyle(m_floorList.GetExtendedStyle() | extendedStyle);
 	m_hallCallList.SetExtendedStyle(m_hallCallList.GetExtendedStyle() | extendedStyle);
+	m_algorithmCandidateList.SetExtendedStyle(
+		m_algorithmCandidateList.GetExtendedStyle() | extendedStyle);
 
 	m_elevatorList.InsertColumn(0, L"电梯", LVCFMT_LEFT, 52);
 	m_elevatorList.InsertColumn(1, L"楼层", LVCFMT_RIGHT, 58);
@@ -589,6 +639,13 @@ void CElevatorSimulationDlg::InitializeListControls()
 	m_hallCallList.InsertColumn(1, L"方向", LVCFMT_CENTER, 52);
 	m_hallCallList.InsertColumn(2, L"等待", LVCFMT_RIGHT, 65);
 	m_hallCallList.InsertColumn(3, L"归属", LVCFMT_LEFT, 88);
+
+	m_algorithmCandidateList.InsertColumn(0, L"电梯", LVCFMT_LEFT, 90);
+	m_algorithmCandidateList.InsertColumn(1, L"ETA (s)", LVCFMT_RIGHT, 110);
+	m_algorithmCandidateList.InsertColumn(2, L"Cost", LVCFMT_RIGHT, 110);
+	m_algorithmCandidateList.InsertColumn(3, L"feasible", LVCFMT_CENTER, 100);
+	m_algorithmCandidateList.InsertColumn(4, L"预计载客", LVCFMT_RIGHT, 110);
+	m_algorithmCandidateList.InsertColumn(5, L"标记", LVCFMT_LEFT, 220);
 }
 
 bool CElevatorSimulationDlg::ReadIntControl(int controlId, const wchar_t* fieldName, int& value)
@@ -720,6 +777,200 @@ void CElevatorSimulationDlg::UpdateElevatorDetails(
 	m_elevatorDetailBody.SetWindowTextW(details);
 }
 
+void CElevatorSimulationDlg::ClearStatisticsTrend()
+{
+	m_statisticsTrend.clear();
+	m_nextTrendSampleTime = 0.0;
+	m_lastTrendSimulationTime = 0.0;
+	m_trendHasSnapshot = false;
+	m_statisticsRefreshScheduled = false;
+	m_statisticsTrendView.SetTrendPoints(m_statisticsTrend);
+}
+
+void CElevatorSimulationDlg::UpdateStatisticsTrend(
+	const std::shared_ptr<const SimulationUISnapshot>& snapshot, bool forceRefresh)
+{
+	if (!snapshot) return;
+	if (m_trendHasSnapshot && snapshot->currentTime < m_lastTrendSimulationTime)
+		ClearStatisticsTrend();
+	m_lastTrendSimulationTime = snapshot->currentTime;
+	m_trendHasSnapshot = true;
+
+	bool sampled = false;
+	if (snapshot->state == SimulationState::Running ||
+		snapshot->state == SimulationState::Paused ||
+		snapshot->state == SimulationState::Finished)
+	{
+		const double interval = (std::max)(0.5, snapshot->config.simulationDuration / 500.0);
+		if (m_statisticsTrend.empty() || snapshot->currentTime >= m_nextTrendSampleTime)
+		{
+			StatisticsTrendPoint point;
+			point.time = snapshot->currentTime;
+			point.waitingCount = snapshot->statistics.waitingCount;
+			point.arrivedCount = snapshot->statistics.arrivedCount;
+			point.averageWaitingTime = snapshot->statistics.averageWaitingTime;
+			if (m_statisticsTrend.size() < 500)
+				m_statisticsTrend.push_back(point);
+			else
+				m_statisticsTrend.back() = point;
+			m_nextTrendSampleTime = snapshot->currentTime + interval;
+			sampled = true;
+		}
+	}
+
+	const auto now = std::chrono::steady_clock::now();
+	const bool refreshDue = !m_statisticsRefreshScheduled || now >= m_nextStatisticsRefresh;
+	if (forceRefresh || (sampled && m_statisticsTrendView.IsWindowVisible() && refreshDue))
+	{
+		m_statisticsTrendView.SetTrendPoints(m_statisticsTrend);
+		m_nextStatisticsRefresh = now + std::chrono::milliseconds(StatisticsRefreshMs);
+		m_statisticsRefreshScheduled = true;
+	}
+}
+
+void CElevatorSimulationDlg::SelectHallCall(HallCallIdentity identity)
+{
+	m_observedHallCall = identity;
+	m_lastRenderedObservation.reset();
+	if (m_simulationWorker)
+		m_simulationWorker->ObserveHallCall(identity.floor, identity.direction);
+	m_rightTabs.SetCurSel(2);
+	UpdateRightPanelVisibility();
+	RelayoutUI();
+	ShowObservationEmptyState(L"正在计算候选电梯评分...");
+}
+
+void CElevatorSimulationDlg::ClearHallCallObservation()
+{
+	if (m_simulationWorker) m_simulationWorker->ClearObservedHallCall();
+	m_observedHallCall.reset();
+	m_lastRenderedObservation.reset();
+	ShowObservationEmptyState(L"请在 Hall Call 页选择一个请求");
+}
+
+void CElevatorSimulationDlg::ValidateObservedHallCall(
+	const std::shared_ptr<const SimulationUISnapshot>& snapshot)
+{
+	if (!m_observedHallCall) return;
+	const bool exists = snapshot && std::any_of(snapshot->hallCalls.begin(), snapshot->hallCalls.end(),
+		[this](const HallCallSnapshot& call)
+		{
+			return call.floorNumber == m_observedHallCall->floor &&
+				call.direction == m_observedHallCall->direction;
+		});
+	if (!exists) ClearHallCallObservation();
+}
+
+void CElevatorSimulationDlg::RefreshObservationViews(bool forceRefresh)
+{
+	if (!m_observedHallCall || !m_simulationWorker)
+	{
+		if (forceRefresh) ShowObservationEmptyState(L"请在 Hall Call 页选择一个请求");
+		return;
+	}
+	const auto observation = m_simulationWorker->GetLatestObservation();
+	if (!observation || observation->floor != m_observedHallCall->floor ||
+		observation->direction != m_observedHallCall->direction)
+	{
+		if (forceRefresh) ShowObservationEmptyState(L"正在计算候选电梯评分...");
+		return;
+	}
+	if (!observation->valid)
+	{
+		ClearHallCallObservation();
+		return;
+	}
+	if (!forceRefresh && observation == m_lastRenderedObservation) return;
+	m_lastRenderedObservation = observation;
+	PopulateObservationViews(*observation);
+}
+
+void CElevatorSimulationDlg::ShowObservationEmptyState(const wchar_t* message)
+{
+	m_algorithmPlaceholder.SetWindowTextW(message);
+	m_algorithmPageSummary.SetWindowTextW(message);
+	m_algorithmCandidateList.DeleteAllItems();
+}
+
+void CElevatorSimulationDlg::PopulateObservationViews(
+	const DispatchObservationSnapshot& observation)
+{
+	const auto best = std::find_if(observation.candidates.begin(), observation.candidates.end(),
+		[](const DispatchCandidateObservation& candidate) { return candidate.feasible; });
+	CString ownerText = L"未分配";
+	if (observation.assignedElevatorId != InvalidElevatorId)
+		ownerText.Format(L"E%d", observation.assignedElevatorId + 1);
+
+	CString rightText;
+	if (best == observation.candidates.end())
+	{
+		rightText.Format(L"当前请求：%dF %s\r\n\r\n当前归属：%s\r\n\r\n最佳单梯候选：无可行候选",
+			observation.floor, DirectionText(observation.direction), ownerText.GetString());
+	}
+	else
+	{
+		rightText.Format(L"当前请求：%dF %s\r\n\r\n当前归属：%s\r\n\r\n最佳单梯候选：E%d\r\n\r\nETA：%.2f s\r\nCost：%.2f",
+			observation.floor, DirectionText(observation.direction), ownerText.GetString(),
+			best->elevatorId + 1, best->eta, best->cost);
+	}
+	m_algorithmPlaceholder.SetWindowTextW(rightText);
+
+	CString pageSummary;
+	pageSummary.Format(L"%dF %s    等待人数：%zu    已等待：%.1f s    当前归属：%s\r\n候选为单请求评分；当前归属还会受到 Joint Dispatch、Reassignment 与 Hysteresis 影响。",
+		observation.floor, DirectionText(observation.direction), observation.waitingCount,
+		(std::max)(0.0, observation.currentTime - observation.firstRequestTime), ownerText.GetString());
+	m_algorithmPageSummary.SetWindowTextW(pageSummary);
+
+	std::vector<const DispatchCandidateObservation*> rows;
+	const std::size_t topCount = (std::min)(std::size_t{ 10 }, observation.candidates.size());
+	for (std::size_t index = 0; index < topCount; ++index)
+		rows.push_back(&observation.candidates[index]);
+	const auto owner = std::find_if(observation.candidates.begin(), observation.candidates.end(),
+		[&observation](const DispatchCandidateObservation& candidate)
+		{
+			return candidate.elevatorId == observation.assignedElevatorId;
+		});
+	if (owner != observation.candidates.end() &&
+		std::none_of(rows.begin(), rows.end(), [owner](const auto* candidate)
+			{ return candidate->elevatorId == owner->elevatorId; }))
+	{
+		rows.push_back(&*owner);
+	}
+
+	m_algorithmCandidateList.SetRedraw(FALSE);
+	m_algorithmCandidateList.DeleteAllItems();
+	for (std::size_t index = 0; index < rows.size(); ++index)
+	{
+		const auto& candidate = *rows[index];
+		CString value;
+		value.Format(L"E%d", candidate.elevatorId + 1);
+		const int row = m_algorithmCandidateList.InsertItem(static_cast<int>(index), value);
+		if (candidate.feasible)
+		{
+			value.Format(L"%.2f", candidate.eta);
+			m_algorithmCandidateList.SetItemText(row, 1, value);
+			value.Format(L"%.2f", candidate.cost);
+			m_algorithmCandidateList.SetItemText(row, 2, value);
+		}
+		else
+		{
+			m_algorithmCandidateList.SetItemText(row, 1, L"—");
+			m_algorithmCandidateList.SetItemText(row, 2, L"—");
+		}
+		m_algorithmCandidateList.SetItemText(row, 3, candidate.feasible ? L"Yes" : L"No");
+		value.Format(L"%d", candidate.projectedOccupancy);
+		m_algorithmCandidateList.SetItemText(row, 4, value);
+		CString mark;
+		if (best != observation.candidates.end() && candidate.elevatorId == best->elevatorId)
+			mark = L"最佳单梯候选";
+		if (candidate.elevatorId == observation.assignedElevatorId)
+			mark += mark.IsEmpty() ? L"当前归属" : L" / 当前归属";
+		m_algorithmCandidateList.SetItemText(row, 5, mark);
+	}
+	m_algorithmCandidateList.SetRedraw(TRUE);
+	m_algorithmCandidateList.Invalidate(FALSE);
+}
+
 void CElevatorSimulationDlg::RefreshBuildingView(
 	const std::shared_ptr<const SimulationUISnapshot>& snapshot, bool forceRefresh)
 {
@@ -789,10 +1040,14 @@ void CElevatorSimulationDlg::RefreshSimulationView(bool forceBuildingRefresh)
 
 	RefreshBuildingView(snapshot, forceBuildingRefresh);
 	UpdateElevatorDetails(snapshot);
+	UpdateStatisticsTrend(snapshot);
+	ValidateObservedHallCall(snapshot);
+	RefreshObservationViews();
 
 	if (m_pageTabs.GetCurSel() == 0 && m_rightPanelExpanded &&
 		m_rightTabs.GetCurSel() == 0)
 	{
+		m_rebuildingHallCallList = true;
 		m_hallCallList.SetRedraw(FALSE);
 		m_hallCallList.DeleteAllItems();
 		for (std::size_t index = 0; index < hallCalls.size(); ++index)
@@ -802,6 +1057,9 @@ void CElevatorSimulationDlg::RefreshSimulationView(bool forceBuildingRefresh)
 			CString value;
 			value.Format(L"%dF", call.floorNumber);
 			m_hallCallList.InsertItem(row, value);
+			const DWORD_PTR identity = (static_cast<DWORD_PTR>(call.floorNumber) << 1) |
+				(call.direction == Direction::Up ? 1u : 0u);
+			m_hallCallList.SetItemData(row, identity);
 			m_hallCallList.SetItemText(row, 1, DirectionText(call.direction));
 			value.Format(L"%zu", call.waitingCount);
 			m_hallCallList.SetItemText(row, 2, value);
@@ -810,9 +1068,16 @@ void CElevatorSimulationDlg::RefreshSimulationView(bool forceBuildingRefresh)
 			else
 				value.Format(L"E%d", call.assignedElevatorId + 1);
 			m_hallCallList.SetItemText(row, 3, value);
+			if (m_observedHallCall && call.floorNumber == m_observedHallCall->floor &&
+				call.direction == m_observedHallCall->direction)
+			{
+				m_hallCallList.SetItemState(row, LVIS_SELECTED | LVIS_FOCUSED,
+					LVIS_SELECTED | LVIS_FOCUSED);
+			}
 		}
 		m_hallCallList.SetRedraw(TRUE);
 		m_hallCallList.Invalidate(FALSE);
+		m_rebuildingHallCallList = false;
 	}
 
 	CString statisticValues[6];
@@ -832,6 +1097,8 @@ void CElevatorSimulationDlg::OnBnClickedStart()
 	SimulationConfig config;
 	std::uint32_t seed = 0;
 	if (!ReadConfiguration(config, seed)) return;
+	ClearStatisticsTrend();
+	ClearHallCallObservation();
 	if (m_simulationWorker) m_simulationWorker->Stop();
 	m_simulationWorker = std::make_unique<SimulationWorker>(config, seed,
 		DispatcherExecutionMode::Parallel);
@@ -853,6 +1120,8 @@ void CElevatorSimulationDlg::OnBnClickedResume()
 
 void CElevatorSimulationDlg::OnBnClickedReset()
 {
+	ClearStatisticsTrend();
+	ClearHallCallObservation();
 	if (m_simulationWorker) m_simulationWorker->Reset();
 	RefreshSimulationView(true);
 }

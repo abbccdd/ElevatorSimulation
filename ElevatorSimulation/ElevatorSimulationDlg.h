@@ -6,10 +6,13 @@
 
 #include "Core/SimulationWorker.h"
 #include "ElevatorBuildingView.h"
+#include "StatisticsTrendView.h"
 
 #include <array>
 #include <chrono>
 #include <memory>
+#include <optional>
+#include <vector>
 
 
 // CElevatorSimulationDlg 对话框
@@ -53,6 +56,7 @@ protected:
 	afx_msg void OnBnClickedPanelToggle();
 	afx_msg void OnTcnSelchangePages(NMHDR* pNMHDR, LRESULT* pResult);
 	afx_msg void OnTcnSelchangeRightTabs(NMHDR* pNMHDR, LRESULT* pResult);
+	afx_msg void OnNMClickHallCallList(NMHDR* pNMHDR, LRESULT* pResult);
 	afx_msg LRESULT OnElevatorSelectionChanged(WPARAM wParam, LPARAM lParam);
 	DECLARE_MESSAGE_MAP()
 
@@ -61,6 +65,18 @@ private:
 	static constexpr UINT SimulationTimerIntervalMs = 33;
 	static constexpr int NormalBuildingRefreshMs = 33;
 	static constexpr int LargeBuildingRefreshMs = 50;
+	static constexpr int StatisticsRefreshMs = 250;
+
+	struct HallCallIdentity
+	{
+		int floor = 1;
+		Direction direction = Direction::Idle;
+
+		bool operator==(const HallCallIdentity& other) const noexcept
+		{
+			return floor == other.floor && direction == other.direction;
+		}
+	};
 
 	std::unique_ptr<SimulationWorker> m_simulationWorker;
 	CListCtrl m_elevatorList;
@@ -79,9 +95,12 @@ private:
 	CButton m_rightPanel;
 	CButton m_panelToggle;
 	ElevatorBuildingView m_buildingView;
+	StatisticsTrendView m_statisticsTrendView;
 	CTabCtrl m_pageTabs;
 	CTabCtrl m_rightTabs;
 	CStatic m_pagePlaceholder;
+	CStatic m_algorithmPageSummary;
+	CListCtrl m_algorithmCandidateList;
 	CStatic m_elevatorDetailTitle;
 	CStatic m_elevatorDetailBody;
 	CStatic m_algorithmPlaceholder;
@@ -98,6 +117,15 @@ private:
 	bool m_buildingRefreshScheduled = false;
 	bool m_lastBuildingLargeScaleMode = false;
 	std::chrono::steady_clock::time_point m_nextBuildingRefresh;
+	std::vector<StatisticsTrendPoint> m_statisticsTrend;
+	double m_nextTrendSampleTime = 0.0;
+	double m_lastTrendSimulationTime = 0.0;
+	bool m_trendHasSnapshot = false;
+	bool m_statisticsRefreshScheduled = false;
+	std::chrono::steady_clock::time_point m_nextStatisticsRefresh;
+	std::optional<HallCallIdentity> m_observedHallCall;
+	std::shared_ptr<const DispatchObservationSnapshot> m_lastRenderedObservation;
+	bool m_rebuildingHallCallList = false;
 
 	void CreateUIFramework();
 	void InitializeListControls();
@@ -105,6 +133,15 @@ private:
 	void UpdateTabPageVisibility();
 	void UpdateRightPanelVisibility();
 	void UpdateElevatorDetails(const std::shared_ptr<const SimulationUISnapshot>& snapshot);
+	void ClearStatisticsTrend();
+	void UpdateStatisticsTrend(const std::shared_ptr<const SimulationUISnapshot>& snapshot,
+		bool forceRefresh = false);
+	void SelectHallCall(HallCallIdentity identity);
+	void ClearHallCallObservation();
+	void ValidateObservedHallCall(const std::shared_ptr<const SimulationUISnapshot>& snapshot);
+	void RefreshObservationViews(bool forceRefresh = false);
+	void ShowObservationEmptyState(const wchar_t* message);
+	void PopulateObservationViews(const DispatchObservationSnapshot& observation);
 	void SetSpeedPreset(const wchar_t* speedText);
 	void UpdateSpeedDisplay(double speed);
 	bool ReadConfiguration(SimulationConfig& config, std::uint32_t& seed);

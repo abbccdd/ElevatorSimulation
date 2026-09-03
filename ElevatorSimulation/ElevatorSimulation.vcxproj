@@ -194,6 +194,7 @@
     <ClInclude Include="ElevatorBuildingView.h" />
     <ClInclude Include="ElevatorSimulation.h" />
     <ClInclude Include="ElevatorSimulationDlg.h" />
+    <ClInclude Include="StatisticsTrendView.h" />
     <ClInclude Include="framework.h" />
     <ClInclude Include="pch.h" />
     <ClInclude Include="Resource.h" />
@@ -203,6 +204,7 @@
     <ClCompile Include="ElevatorBuildingView.cpp" />
     <ClCompile Include="ElevatorSimulation.cpp" />
     <ClCompile Include="ElevatorSimulationDlg.cpp" />
+    <ClCompile Include="StatisticsTrendView.cpp" />
     <ClCompile Include="pch.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>

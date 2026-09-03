@@ -33,6 +33,7 @@ ElevatorSimulation/
 │  │  └─ Statistics.h / Statistics.cpp     事件统计与只读快照
 │  ├─ ElevatorSimulation.cpp / .h         原 App 入口（未修改）
 │  ├─ ElevatorSimulationDlg.cpp / .h      原对话框，最小快照接入
+│  ├─ StatisticsTrendView.cpp / .h        UI 层低频统计趋势自绘
 │  ├─ ElevatorSimulation.vcxproj           编译项与各配置
 │  ├─ ElevatorSimulation.vcxproj.filters   VS 虚拟分组
 │  ├─ ElevatorSimulation.rc / Resource.h  原资源，增加初始化状态控件标识
@@ -89,7 +90,7 @@ Snapshot 按值构造：`SimulationWorker` 将 UI 所需的 `SimulationUISnapsho
 
 调度快照 `ElevatorDispatchSnapshot::StopService` 的 Idle 记录表示内呼/下客，Up/Down 记录表示外呼；新增 `boardingTargetFloors` 为已知等待乘客的 FIFO 目标层前缀，最多需要 capacity 人。Simulation 回填真实人数并跳过正在 Boarding 的队头；纯人数旧快照仍可使用，但不会推测未知下客楼层。`SelectElevator` / `SelectFromSnapshots` 签名保持兼容，Dispatcher 不直接读取 Passenger、Floor 或 Simulation。
 
-新增 `HallCallDispatchSnapshot`（请求及 FIFO 目标副本）、`DispatchScore`（可行性、ETA、Cost、预计人数）与 `DispatchPlan`（归属方案、总成本及搜索计数）。`ScoreSnapshot` 复用同一个评分实现，`SelectReassignment` / `PlanAssignments` 只读决策。Simulation 负责真实提交，Elevator 仅新增安全的 `RemoveHallCall`，不改变原状态机。
+新增 `HallCallDispatchSnapshot`（请求及 FIFO 目标副本）、`DispatchScore`（可行性、ETA、Cost、预计人数）与 `DispatchPlan`（归属方案、总成本及搜索计数）。`ScoreSnapshot` 复用同一个评分实现，`SelectReassignment` / `PlanAssignments` 只读决策。`DispatchObservationSnapshot` 由 Simulation 针对真实 Hall Call 构造，只读复用 `BuildDispatchSnapshots` 与 `ScoreSnapshot`，按 feasible、Cost、ETA、ID 排序，绝不提交调度状态。Simulation 负责真实提交，Elevator 仅新增安全的 `RemoveHallCall`，不改变原状态机。
 
 ## 编号、初始化与所有权
 
@@ -134,8 +135,10 @@ Snapshot 按值构造：`SimulationWorker` 将 UI 所需的 `SimulationUISnapsho
 | `ValidateState()` | 只读检查人数守恒、ID 所有权和外呼归属 |
 | `SetDispatcherExecutionMode(mode, workers)` | 选择 Sequential 或固定线程池 Parallel 评分；默认核心模式为 Sequential |
 | `GetUISnapshot()` | 由 Worker 线程构造 UI 所需只读副本；乘客明细按需使用独立接口 |
+| `GetDispatchObservation(floor, direction)` | 只读返回真实 Hall Call 的单梯候选评分；请求不存在时返回 invalid |
 | `SimulationWorker::{Start,Pause,Resume,Reset,Stop}` | 将控制命令按 FIFO 交给工作线程；Stop 正常 join |
 | `SimulationWorker::GetLatestSnapshot()` | UI 线程原子读取最近发布的不可变快照 |
+| `SimulationWorker::{ObserveHallCall,ClearObservedHallCall,GetLatestObservation}` | Worker 线程最多约 5Hz 计算并原子发布只读观察快照 |
 
 初始化要求：`floorCount >= 2`，`elevatorCount > 0 && elevatorCount % 3 == 0`，`capacity > 0`，S/T/总时长/倍速均为**有限正数**，`passengerRate` 为**有限非负数**。拒绝 NaN、正负无穷。K=10~20、S=1~5、T=2~10 是背景中的典型范围，当前不将其作为硬性上限。零速率关闭随机生成。passengerRate 为全楼每仿真秒的平均到达人数，采用指数间隔的单人 Poisson 到达；起终点均匀取样且不相同。
 

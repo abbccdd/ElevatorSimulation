@@ -460,6 +460,42 @@ std::vector<HallCallSnapshot> Simulation::GetHallCallSnapshots() const
     return snapshots;
 }
 
+DispatchObservationSnapshot Simulation::GetDispatchObservation(int floor, Direction direction) const
+{
+    DispatchObservationSnapshot observation;
+    observation.floor = floor;
+    observation.direction = direction;
+    const auto call = m_hallCalls.find({ floor, direction });
+    if (call == m_hallCalls.end()) return observation;
+
+    const auto request = BuildHallCallSnapshot(call->first, call->second);
+    if (request.waitingCount == 0) return observation;
+    observation.valid = true;
+    observation.waitingCount = static_cast<std::size_t>(request.waitingCount);
+    observation.firstRequestTime = request.firstRequestTime;
+    observation.currentTime = m_currentTime;
+    observation.assignedElevatorId = call->second.assignedElevatorId;
+
+    const auto elevators = BuildDispatchSnapshots();
+    observation.candidates.reserve(elevators.size());
+    for (const auto& elevator : elevators)
+    {
+        const auto score = m_dispatcher.ScoreSnapshot(floor, direction, elevator,
+            request.firstRequestTime, m_currentTime);
+        observation.candidates.push_back({ elevator.elevator.id, score.feasible,
+            score.cost, score.eta, score.projectedOccupancy });
+    }
+    std::sort(observation.candidates.begin(), observation.candidates.end(),
+        [](const DispatchCandidateObservation& left, const DispatchCandidateObservation& right)
+        {
+            if (left.feasible != right.feasible) return left.feasible > right.feasible;
+            if (left.cost != right.cost) return left.cost < right.cost;
+            if (left.eta != right.eta) return left.eta < right.eta;
+            return left.elevatorId < right.elevatorId;
+        });
+    return observation;
+}
+
 bool Simulation::ValidateState() const
 {
     if (m_state == SimulationState::Uninitialized)

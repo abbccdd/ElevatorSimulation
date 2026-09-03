@@ -92,6 +92,20 @@ namespace
         }
         return nullptr;
     }
+
+    template <typename Predicate>
+    std::shared_ptr<const DispatchObservationSnapshot> WaitForObservation(
+        const SimulationWorker& worker, Predicate predicate, std::chrono::milliseconds timeout)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        while (std::chrono::steady_clock::now() < deadline)
+        {
+            auto observation = worker.GetLatestObservation();
+            if (predicate(observation)) return observation;
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        return nullptr;
+    }
 }
 
 int main()
@@ -197,6 +211,28 @@ int main()
         if (!snapshot) throw std::runtime_error("worker did not reset");
         tests.Check(snapshot->randomSeed == 1234 && snapshot->statistics.totalPassengerCount == 0,
             "reset restores initial fixed-seed state");
+    });
+
+    tests.Run("worker publishes and clears read-only observation", [&]
+    {
+        auto config = TestConfig();
+        config.passengerRate = 0.0;
+        SimulationWorker worker(config, 55, DispatcherExecutionMode::Parallel, 2);
+        auto snapshot = WaitForSnapshot(worker,
+            [](const auto& value) { return value.state == SimulationState::Ready; },
+            std::chrono::seconds(2));
+        if (!snapshot) throw std::runtime_error("worker did not initialize for observation");
+        worker.ObserveHallCall(7, Direction::Up);
+        const auto observation = WaitForObservation(worker,
+            [](const auto& value) { return value && !value->valid; }, std::chrono::seconds(2));
+        if (!observation) throw std::runtime_error("worker did not publish invalid observation");
+        tests.Check(observation->floor == 7 && observation->direction == Direction::Up,
+            "worker preserves requested hall call identity");
+        worker.ClearObservedHallCall();
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (worker.GetLatestObservation() && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        tests.Check(!worker.GetLatestObservation(), "worker clears observation snapshot");
     });
 
     tests.Run("running worker closes and joins", [&]

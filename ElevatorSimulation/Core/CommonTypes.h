@@ -141,6 +141,29 @@ struct DispatchScore
     int projectedOccupancy = 0;
 };
 
+// 单个外呼的只读评分观察结果。仅用于展示，不参与调度提交。
+struct DispatchCandidateObservation
+{
+    int elevatorId = InvalidElevatorId;
+    bool feasible = false;
+    double cost = std::numeric_limits<double>::infinity();
+    double eta = std::numeric_limits<double>::infinity();
+    int projectedOccupancy = 0;
+};
+
+struct DispatchObservationSnapshot
+{
+    bool valid = false;
+    int floor = 1;
+    Direction direction = Direction::Idle;
+    std::size_t waitingCount = 0;
+    double firstRequestTime = 0.0;
+    double currentTime = 0.0;
+    int assignedElevatorId = InvalidElevatorId;
+    // feasible、Cost、ETA、elevatorId 顺序，保留全部候选供 UI 取 Top 10 和当前归属。
+    std::vector<DispatchCandidateObservation> candidates;
+};
+
 struct DispatchPlan
 {
     // 与传入请求顺序一致，值为电梯容器下标；-1 表示本批未分配。

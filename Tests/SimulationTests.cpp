@@ -84,6 +84,28 @@ namespace
                 ha[i].assignedElevatorId==hb[i].assignedElevatorId && ha[i].waitingCount==hb[i].waitingCount,
                 "same request ownership");
     }
+
+    void SameObservation(TestSuite& tests, const DispatchObservationSnapshot& left,
+        const DispatchObservationSnapshot& right)
+    {
+        tests.Check(left.valid==right.valid && left.floor==right.floor && left.direction==right.direction &&
+            left.waitingCount==right.waitingCount && left.assignedElevatorId==right.assignedElevatorId,
+            "same observation request");
+        tests.Near(left.firstRequestTime,right.firstRequestTime,"same observation request time");
+        tests.Near(left.currentTime,right.currentTime,"same observation current time");
+        tests.Check(left.candidates.size()==right.candidates.size(),"same observation candidate count");
+        for(std::size_t i=0;i<left.candidates.size();++i)
+        {
+            const auto& a=left.candidates[i]; const auto& b=right.candidates[i];
+            tests.Check(a.elevatorId==b.elevatorId && a.feasible==b.feasible &&
+                a.projectedOccupancy==b.projectedOccupancy,"same observation candidate");
+            if(a.feasible)
+            {
+                tests.Near(a.cost,b.cost,"same observation cost");
+                tests.Near(a.eta,b.eta,"same observation ETA");
+            }
+        }
+    }
 }
 
 int main()
@@ -490,6 +512,68 @@ int main()
         a.Update(100);
         for(int frame=0;frame<800;++frame) b.Update(0.125);
         SameState(tests,a,b);
+    });
+    tests.Run("dispatch observation is read-only and reuses dispatcher scoring", [&] {
+        const auto config=Config(); Simulation simulation;
+        tests.Check(simulation.Initialize(config,42),"initialize observation fixture");
+        tests.Check(simulation.AddPassenger(2,6)!=InvalidPassengerId,"add observed request");
+        const auto beforeUI=simulation.GetUISnapshot();
+        const auto beforePeople=simulation.GetPassengerSnapshots();
+        const auto observation=simulation.GetDispatchObservation(2,Direction::Up);
+        tests.Check(observation.valid && observation.floor==2 && observation.direction==Direction::Up &&
+            observation.waitingCount==1 && observation.assignedElevatorId==InvalidElevatorId,
+            "observation identifies real unassigned hall call");
+        tests.Check(observation.candidates.size()==3,"observation scores complete fleet");
+
+        ElevatorDispatcher dispatcher;
+        const int starts[]={1,6,3};
+        for(int id=0;id<3;++id)
+        {
+            Elevator elevator(id,starts[id],config);
+            const auto expected=dispatcher.ScoreSnapshot(2,Direction::Up,elevator.GetDispatchSnapshot(),0,0);
+            const auto actual=std::find_if(observation.candidates.begin(),observation.candidates.end(),
+                [id](const auto& candidate) { return candidate.elevatorId==id; });
+            tests.Check(actual!=observation.candidates.end() && actual->feasible==expected.feasible &&
+                actual->projectedOccupancy==expected.projectedOccupancy,"observation candidate matches score");
+            tests.Near(actual->cost,expected.cost,"observation cost matches ScoreSnapshot");
+            tests.Near(actual->eta,expected.eta,"observation ETA matches ScoreSnapshot");
+        }
+
+        const auto afterUI=simulation.GetUISnapshot();
+        const auto afterPeople=simulation.GetPassengerSnapshots();
+        tests.Check(beforeUI.state==afterUI.state && beforeUI.currentTime==afterUI.currentTime &&
+            beforeUI.randomSeed==afterUI.randomSeed && beforeUI.elevators.size()==afterUI.elevators.size() &&
+            beforeUI.floors.size()==afterUI.floors.size() && beforeUI.hallCalls.size()==afterUI.hallCalls.size() &&
+            beforeUI.statistics.totalPassengerCount==afterUI.statistics.totalPassengerCount &&
+            beforeUI.statistics.waitingCount==afterUI.statistics.waitingCount &&
+            beforeUI.statistics.ridingCount==afterUI.statistics.ridingCount &&
+            beforeUI.statistics.arrivedCount==afterUI.statistics.arrivedCount &&
+            beforePeople.size()==afterPeople.size(),"observation preserves public simulation state");
+        for(std::size_t i=0;i<beforeUI.elevators.size();++i)
+            tests.Check(beforeUI.elevators[i].currentFloor==afterUI.elevators[i].currentFloor &&
+                beforeUI.elevators[i].direction==afterUI.elevators[i].direction &&
+                beforeUI.elevators[i].state==afterUI.elevators[i].state &&
+                beforeUI.elevators[i].passengerCount==afterUI.elevators[i].passengerCount,
+                "observation preserves elevator state");
+        tests.Check(beforePeople[0].id==afterPeople[0].id && beforePeople[0].state==afterPeople[0].state &&
+            beforePeople[0].elevatorId==afterPeople[0].elevatorId &&
+            beforePeople[0].requestTime==afterPeople[0].requestTime,
+            "observation preserves passenger state");
+        tests.Check(simulation.ValidateState(),"state valid after observation");
+    });
+    tests.Run("dispatch observation is mode-independent and invalid when absent", [&] {
+        const auto config=Config(); Simulation sequential,parallel;
+        parallel.SetDispatcherExecutionMode(DispatcherExecutionMode::Parallel,2);
+        tests.Check(sequential.Initialize(config,73) && parallel.Initialize(config,73),
+            "initialize observation modes");
+        sequential.AddPassenger(5,1); parallel.AddPassenger(5,1);
+        const auto left=sequential.GetDispatchObservation(5,Direction::Down);
+        const auto right=parallel.GetDispatchObservation(5,Direction::Down);
+        SameObservation(tests,left,right);
+        tests.Check(!sequential.GetDispatchObservation(4,Direction::Up).valid,
+            "missing hall call observation is invalid");
+        tests.Check(!sequential.GetDispatchObservation(5,Direction::Idle).valid,
+            "invalid direction observation is invalid");
     });
     return tests.Finish();
 }

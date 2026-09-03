@@ -5,12 +5,14 @@
 #include <atomic>
 #include <chrono>
 #include <exception>
+#include <optional>
 #include <utility>
 #include <vector>
 
 namespace
 {
     constexpr auto UpdateInterval = std::chrono::milliseconds(16);
+    constexpr auto ObservationInterval = std::chrono::milliseconds(200);
 }
 
 SimulationWorker::SimulationWorker(const SimulationConfig& config,
@@ -34,22 +36,32 @@ SimulationWorker::~SimulationWorker()
 
 void SimulationWorker::Start()
 {
-    Enqueue(Command::Start);
+    Enqueue({ CommandType::Start });
 }
 
 void SimulationWorker::Pause()
 {
-    Enqueue(Command::Pause);
+    Enqueue({ CommandType::Pause });
 }
 
 void SimulationWorker::Resume()
 {
-    Enqueue(Command::Resume);
+    Enqueue({ CommandType::Resume });
 }
 
 void SimulationWorker::Reset()
 {
-    Enqueue(Command::Reset);
+    Enqueue({ CommandType::Reset });
+}
+
+void SimulationWorker::ObserveHallCall(int floor, Direction direction)
+{
+    Enqueue({ CommandType::ObserveHallCall, floor, direction });
+}
+
+void SimulationWorker::ClearObservedHallCall()
+{
+    Enqueue({ CommandType::ClearObservedHallCall });
 }
 
 void SimulationWorker::Stop()
@@ -58,7 +70,7 @@ void SimulationWorker::Stop()
         std::lock_guard<std::mutex> lock(m_commandMutex);
         if (!m_stopQueued)
         {
-            m_commands.push_back(Command::Stop);
+            m_commands.push_back({ CommandType::Stop });
             m_stopQueued = true;
         }
     }
@@ -69,6 +81,11 @@ void SimulationWorker::Stop()
 std::shared_ptr<const SimulationUISnapshot> SimulationWorker::GetLatestSnapshot() const
 {
     return std::atomic_load_explicit(&m_latestSnapshot, std::memory_order_acquire);
+}
+
+std::shared_ptr<const DispatchObservationSnapshot> SimulationWorker::GetLatestObservation() const
+{
+    return std::atomic_load_explicit(&m_latestObservation, std::memory_order_acquire);
 }
 
 void SimulationWorker::Enqueue(Command command)
@@ -95,6 +112,8 @@ void SimulationWorker::ThreadMain()
 
         using Clock = std::chrono::steady_clock;
         auto wallClockBase = Clock::now();
+        auto nextObservation = wallClockBase;
+        std::optional<std::pair<int, Direction>> observedHallCall;
         bool stopping = false;
         while (!stopping)
         {
@@ -117,21 +136,44 @@ void SimulationWorker::ThreadMain()
             }
             wallClockBase = now;
 
-            for (const Command command : commands)
+            bool observationRequested = false;
+            for (const Command& command : commands)
             {
-                switch (command)
+                switch (command.type)
                 {
-                case Command::Start: simulation.Start(); break;
-                case Command::Pause: simulation.Pause(); break;
-                case Command::Resume: simulation.Resume(); break;
-                case Command::Reset: simulation.Reset(); break;
-                case Command::Stop: stopping = true; break;
+                case CommandType::Start: simulation.Start(); break;
+                case CommandType::Pause: simulation.Pause(); break;
+                case CommandType::Resume: simulation.Resume(); break;
+                case CommandType::Reset:
+                    simulation.Reset();
+                    observationRequested = observedHallCall.has_value();
+                    break;
+                case CommandType::ObserveHallCall:
+                    observedHallCall = std::make_pair(command.floor, command.direction);
+                    observationRequested = true;
+                    break;
+                case CommandType::ClearObservedHallCall:
+                    observedHallCall.reset();
+                    std::atomic_store_explicit(&m_latestObservation,
+                        std::shared_ptr<const DispatchObservationSnapshot>(), std::memory_order_release);
+                    break;
+                case CommandType::Stop: stopping = true; break;
                 }
                 // 每个控制命令都建立新的墙钟基点，暂停时间不会进入下一次 Update。
                 wallClockBase = Clock::now();
                 if (stopping) break;
             }
-            if (!stopping) PublishSnapshot(simulation, true);
+            if (!stopping)
+            {
+                PublishSnapshot(simulation, true);
+                const auto observationTime = Clock::now();
+                if (observedHallCall && (observationRequested || observationTime >= nextObservation))
+                {
+                    if (!PublishObservation(simulation, observedHallCall->first, observedHallCall->second))
+                        observedHallCall.reset();
+                    nextObservation = observationTime + ObservationInterval;
+                }
+            }
         }
         PublishSnapshot(simulation, false);
     }
@@ -143,6 +185,8 @@ void SimulationWorker::ThreadMain()
         std::shared_ptr<const SimulationUISnapshot> snapshot =
             std::make_shared<SimulationUISnapshot>(std::move(failure));
         std::atomic_store_explicit(&m_latestSnapshot, std::move(snapshot), std::memory_order_release);
+        std::atomic_store_explicit(&m_latestObservation,
+            std::shared_ptr<const DispatchObservationSnapshot>(), std::memory_order_release);
     }
 }
 
@@ -151,4 +195,14 @@ void SimulationWorker::PublishSnapshot(const Simulation& simulation, bool worker
     std::shared_ptr<const SimulationUISnapshot> snapshot =
         std::make_shared<SimulationUISnapshot>(simulation.GetUISnapshot(workerActive));
     std::atomic_store_explicit(&m_latestSnapshot, std::move(snapshot), std::memory_order_release);
+}
+
+bool SimulationWorker::PublishObservation(const Simulation& simulation, int floor, Direction direction)
+{
+    auto value = simulation.GetDispatchObservation(floor, direction);
+    const bool valid = value.valid;
+    std::shared_ptr<const DispatchObservationSnapshot> observation =
+        std::make_shared<DispatchObservationSnapshot>(std::move(value));
+    std::atomic_store_explicit(&m_latestObservation, std::move(observation), std::memory_order_release);
+    return valid;
 }
