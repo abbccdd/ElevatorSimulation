@@ -99,12 +99,12 @@ private:
 	ElevatorBuildingView m_buildingView;
 	StatisticsTrendView m_statisticsTrendView;
 	CTabCtrl m_pageTabs;
-	CTabCtrl m_rightTabs;
+	DashboardRightTabs m_rightTabs;
 	CStatic m_pagePlaceholder;
 	CStatic m_algorithmPageSummary;
 	CListCtrl m_algorithmCandidateList;
 	CStatic m_elevatorDetailTitle;
-	CStatic m_elevatorDetailBody;
+	ElevatorDetailDashboard m_elevatorDetailBody;
 	CStatic m_algorithmPlaceholder;
 	CStatic m_parameterSection;
 	CStatic m_controlSection;
