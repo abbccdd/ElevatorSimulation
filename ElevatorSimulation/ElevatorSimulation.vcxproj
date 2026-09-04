@@ -226,6 +226,7 @@
     <ClInclude Include="Core\Passenger.h" />
     <ClInclude Include="Core\Floor.h" />
     <ClInclude Include="Core\Elevator.h" />
+    <ClInclude Include="Core\EventScheduler.h" />
     <ClInclude Include="Core\Dispatcher.h" />
     <ClInclude Include="Core\FixedThreadPool.h" />
     <ClInclude Include="Core\Simulation.h" />
@@ -238,6 +239,9 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="Core\Elevator.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="Core\EventScheduler.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="Core\Dispatcher.cpp">
@@ -273,6 +277,8 @@
     <None Include="..\Tests\ConcurrencyTests.cpp" />
     <None Include="..\Tests\DispatchPerformance.cpp" />
     <None Include="..\Tests\RunDispatchPerformance.ps1" />
+    <None Include="..\Tests\SimulationPerformance.cpp" />
+    <None Include="..\Tests\RunSimulationPerformance.ps1" />
     <None Include="..\Tests\RunCoreTests.cmd" />
     <None Include="..\docs\AlgorithmDesign.md" />
     <None Include="..\Demo\AlgorithmDemo.cpp" />

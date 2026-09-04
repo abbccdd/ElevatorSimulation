@@ -99,6 +99,9 @@
     <ClInclude Include="Core\Elevator.h">
       <Filter>Core</Filter>
     </ClInclude>
+    <ClInclude Include="Core\EventScheduler.h">
+      <Filter>Core</Filter>
+    </ClInclude>
     <ClInclude Include="Core\Dispatcher.h">
       <Filter>Core</Filter>
     </ClInclude>
@@ -121,6 +124,9 @@
       <Filter>Core</Filter>
     </ClCompile>
     <ClCompile Include="Core\Elevator.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="Core\EventScheduler.cpp">
       <Filter>Core</Filter>
     </ClCompile>
     <ClCompile Include="Core\Dispatcher.cpp">
@@ -171,6 +177,12 @@
       <Filter>Development</Filter>
     </None>
     <None Include="..\Tests\RunDispatchPerformance.ps1">
+      <Filter>Development</Filter>
+    </None>
+    <None Include="..\Tests\SimulationPerformance.cpp">
+      <Filter>Development</Filter>
+    </None>
+    <None Include="..\Tests\RunSimulationPerformance.ps1">
       <Filter>Development</Filter>
     </None>
     <None Include="..\Tests\RunCoreTests.cmd">

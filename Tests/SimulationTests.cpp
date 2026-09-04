@@ -1,8 +1,11 @@
 #include "Core/Simulation.h"
+#include "Core/EventScheduler.h"
 #include "TestSupport.h"
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <limits>
+#include <random>
 
 namespace
 {
@@ -155,11 +158,117 @@ namespace
             }
         }
     }
+
+    double FirstArrivalTime(double passengerRate, std::uint32_t seed)
+    {
+        std::mt19937 random(seed);
+        const double uniform = (static_cast<double>(random()) + 0.5) / 4294967296.0;
+        return -std::log(uniform) / passengerRate;
+    }
+
+    void SameCompleteState(TestSuite& tests, const Simulation& left, const Simulation& right)
+    {
+        SameState(tests, left, right);
+        const auto leftFloors = left.GetFloorSnapshots();
+        const auto rightFloors = right.GetFloorSnapshots();
+        tests.Check(leftFloors.size() == rightFloors.size(), "same complete floor count");
+        for (std::size_t index = 0; index < leftFloors.size(); ++index)
+            tests.Check(leftFloors[index].floorNumber == rightFloors[index].floorNumber &&
+                leftFloors[index].upWaitingCount == rightFloors[index].upWaitingCount &&
+                leftFloors[index].downWaitingCount == rightFloors[index].downWaitingCount,
+                "same complete floor queues");
+
+        const auto leftStats = left.GetStatisticsSnapshot();
+        const auto rightStats = right.GetStatisticsSnapshot();
+        tests.Check(leftStats.boardedCount == rightStats.boardedCount,
+            "same complete boarded count");
+        tests.Near(leftStats.maxWaitingTime, rightStats.maxWaitingTime,
+            "same complete max wait", 1e-6);
+        tests.Check(leftStats.elevators.size() == rightStats.elevators.size(),
+            "same complete elevator statistics count");
+        for (std::size_t index = 0; index < leftStats.elevators.size(); ++index)
+        {
+            const auto& a = leftStats.elevators[index];
+            const auto& b = rightStats.elevators[index];
+            tests.Check(a.id == b.id && a.transportedCount == b.transportedCount &&
+                a.traveledFloors == b.traveledFloors &&
+                a.emptyTravelFloors == b.emptyTravelFloors,
+                "same complete elevator counters");
+            tests.Near(a.idleTime, b.idleTime, "same complete idle time", 1e-6);
+            tests.Near(a.fullTime, b.fullTime, "same complete full time", 1e-6);
+        }
+
+        const auto leftCalls = left.GetHallCallSnapshots();
+        const auto rightCalls = right.GetHallCallSnapshots();
+        for (std::size_t index = 0; index < leftCalls.size(); ++index)
+            tests.Near(leftCalls[index].firstRequestTime, rightCalls[index].firstRequestTime,
+                "same complete hall call time", 1e-6);
+    }
 }
 
 int main()
 {
     TestSuite tests("Simulation");
+    tests.Run("event calendar has deterministic total ordering", [&] {
+        EventScheduler scheduler;
+        scheduler.Push(5.0,SimulationEventType::PassengerArrival);
+        scheduler.Push(5.0,SimulationEventType::ElevatorAction,2);
+        scheduler.Push(5.0,SimulationEventType::SimulationEnd);
+        scheduler.Push(5.0,SimulationEventType::ElevatorAction,0);
+        scheduler.Push(5.0,SimulationEventType::ElevatorAction,1);
+        scheduler.Push(4.0,SimulationEventType::SimulationEnd);
+        tests.Near(scheduler.Top().time,4.0,"earlier time wins"); scheduler.Pop();
+        for(int id=0;id<3;++id)
+        {
+            tests.Check(scheduler.Top().type==SimulationEventType::ElevatorAction &&
+                scheduler.Top().elevatorId==id,"same-time elevators ordered by ID");
+            scheduler.Pop();
+        }
+        tests.Check(scheduler.Top().type==SimulationEventType::PassengerArrival,
+            "passenger follows elevator batch"); scheduler.Pop();
+        tests.Check(scheduler.Top().type==SimulationEventType::SimulationEnd,
+            "simulation end is last"); scheduler.Pop();
+        scheduler.Push(6.0,SimulationEventType::PassengerArrival);
+        scheduler.Push(6.0,SimulationEventType::PassengerArrival);
+        const auto firstSequence=scheduler.Top().sequence; scheduler.Pop();
+        tests.Check(firstSequence<scheduler.Top().sequence,"sequence stabilizes exact ties");
+        scheduler.Clear(); tests.Check(scheduler.Empty(),"clear removes all events");
+    });
+    tests.Run("simultaneous elevator completions form one deterministic batch", [&] {
+        auto config=Config(); config.capacity=1; config.simulationDuration=20;
+        Simulation simulation; tests.Check(simulation.Initialize(config,42),"initialize simultaneous actions");
+        simulation.AddPassenger(1,6); simulation.AddPassenger(6,1); simulation.AddPassenger(3,5);
+        simulation.Start(); simulation.Update(config.personTime);
+        const auto elevators=simulation.GetElevatorSnapshots();
+        tests.Check(simulation.GetStatisticsSnapshot().ridingCount==3,"all simultaneous boards complete");
+        for(int id=0;id<3;++id)
+            tests.Check(elevators[static_cast<std::size_t>(id)].id==id &&
+                (elevators[static_cast<std::size_t>(id)].state==ElevatorState::MovingUp ||
+                 elevators[static_cast<std::size_t>(id)].state==ElevatorState::MovingDown),
+                "batch stabilizes after every elevator action");
+        tests.Check(simulation.ValidateState(),"simultaneous batch remains valid");
+    });
+    tests.Run("elevator action precedes coincident passenger arrival", [&] {
+        constexpr std::uint32_t seed=123456u;
+        auto config=Config(); config.floorCount=20; config.passengerRate=1.0;
+        config.personTime=FirstArrivalTime(config.passengerRate,seed);
+        config.simulationDuration=20;
+        Simulation simulation; tests.Check(simulation.Initialize(config,seed),"initialize coincident events");
+        simulation.AddPassenger(1,20); simulation.Start(); simulation.Update(config.personTime);
+        const auto passengers=simulation.GetPassengerSnapshots();
+        tests.Check(simulation.GetStatisticsSnapshot().totalPassengerCount==2,
+            "coincident random passenger generated");
+        const auto manual=std::find_if(passengers.begin(),passengers.end(),
+            [](const auto& passenger) { return passenger.id==0; });
+        const auto generated=std::find_if(passengers.begin(),passengers.end(),
+            [](const auto& passenger) { return passenger.id==1; });
+        tests.Check(manual!=passengers.end() && manual->state==PassengerState::Riding,
+            "elevator completion applied at coincident time");
+        tests.Check(generated!=passengers.end(),"passenger arrival applied after elevator batch");
+        tests.Near(manual->boardTime,config.personTime,"coincident board timestamp");
+        tests.Near(generated->requestTime,config.personTime,"coincident request timestamp");
+        tests.Check(simulation.ValidateState(),"coincident events stabilize once to valid state");
+    });
     tests.Run("single passenger exact timeline", [&] {
         Simulation simulation; tests.Check(simulation.Initialize(Config(),42),"initialize");
         tests.Check(simulation.AddPassenger(1,3)==0,"first ID"); simulation.Start(); simulation.Update(2.0);
@@ -289,7 +398,20 @@ int main()
         auto config=Config(); config.simulationDuration=3;
         Simulation simulation; simulation.Initialize(config,42); simulation.AddPassenger(1,2); simulation.Start(); simulation.Update(100);
         tests.Check(simulation.GetStatisticsSnapshot().ridingCount==1,"completed boarding retained");
-        tests.Check(simulation.GetElevatorSnapshots()[0].currentFloor==1 && simulation.ValidateState(),"no travel beyond end");
+        tests.Check(simulation.GetElevatorSnapshots()[0].currentFloor==1 &&
+            simulation.GetElevatorSnapshots()[0].state==ElevatorState::Stopped && simulation.ValidateState(),
+            "deadline completion does not start follow-up movement");
+    });
+    tests.Run("random arrival exactly at cutoff is excluded", [&] {
+        constexpr std::uint32_t seed=73u;
+        auto config=Config(); config.passengerRate=1.0;
+        config.simulationDuration=FirstArrivalTime(config.passengerRate,seed);
+        Simulation simulation; tests.Check(simulation.Initialize(config,seed),"initialize exact random cutoff");
+        simulation.Start(); simulation.Update(100);
+        tests.Check(simulation.IsFinished() && simulation.GetStatisticsSnapshot().totalPassengerCount==0,
+            "arrival at duration is not generated");
+        tests.Check(simulation.GetPassengerSnapshots().empty() && simulation.ValidateState(),
+            "exact cutoff leaves no random passenger");
     });
     tests.Run("cutoff during movement", [&] {
         auto config=Config(); config.simulationDuration=4;
@@ -391,6 +513,60 @@ int main()
         for(int frame=0;frame<800;++frame) b.Update(0.125);
         SameState(tests,a,b);
     });
+    tests.Run("one large update matches small updates completely", [&] {
+        auto config=Config(); config.floorCount=12; config.elevatorCount=6; config.capacity=4;
+        config.moveTimePerFloor=1.25; config.personTime=0.75;
+        config.passengerRate=0.8; config.simulationDuration=150;
+        Simulation large,small;
+        tests.Check(large.Initialize(config,918273u) && small.Initialize(config,918273u),
+            "initialize partition comparison");
+        large.Start(); small.Start(); large.Update(100.0);
+        for(int frame=0;frame<2000;++frame) small.Update(0.05);
+        SameCompleteState(tests,large,small);
+    });
+    tests.Run("arrival-time dispatch uses absolute scheduled remainder", [&] {
+        constexpr std::uint32_t seed=123456u;
+        auto config=Config(); config.floorCount=20; config.capacity=4;
+        config.moveTimePerFloor=2.0; config.personTime=0.25;
+        config.passengerRate=1.0; config.simulationDuration=30;
+        const double arrivalTime=FirstArrivalTime(config.passengerRate,seed);
+        tests.Check(arrivalTime>config.personTime &&
+            arrivalTime<config.personTime+config.moveTimePerFloor,
+            "arrival lies inside first movement action");
+        Simulation simulation; tests.Check(simulation.Initialize(config,seed),"initialize scheduled remainder fixture");
+        simulation.AddPassenger(1,20); simulation.Start(); simulation.Update(arrivalTime);
+        const auto passengers=simulation.GetPassengerSnapshots();
+        const auto request=std::find_if(passengers.begin(),passengers.end(),
+            [](const auto& passenger) { return passenger.id==1; });
+        tests.Check(request!=passengers.end() && request->startFloor==11 && request->targetFloor==20,
+            "fixed-seed request is available at movement midpoint");
+        const auto observation=simulation.GetDispatchObservation(11,Direction::Up);
+        tests.Check(observation.valid && observation.assignedElevatorId!=0,
+            "midpoint request leaves comparison elevator route unchanged");
+        const auto candidate=std::find_if(observation.candidates.begin(),observation.candidates.end(),
+            [](const auto& item) { return item.elevatorId==0; });
+        tests.Check(candidate!=observation.candidates.end() && candidate->feasible,
+            "moving comparison elevator is a feasible candidate");
+
+        Elevator elevator(0,1,config);
+        tests.Check(elevator.AddHallCall(1,Direction::Up) && elevator.BeginBoarding(0,20),
+            "build equivalent elevator action");
+        tests.Check(elevator.Advance(config.personTime).type==ElevatorEventType::Boarded &&
+            elevator.FinishStop(),"advance equivalent elevator into movement");
+        auto corrected=elevator.GetDispatchSnapshot();
+        const auto stale=corrected;
+        corrected.remainingActionTime=config.personTime+config.moveTimePerFloor-arrivalTime;
+        ElevatorDispatcher dispatcher;
+        const auto expected=dispatcher.ScoreSnapshot(11,Direction::Up,corrected,
+            request->requestTime,arrivalTime);
+        const auto staleScore=dispatcher.ScoreSnapshot(11,Direction::Up,stale,
+            request->requestTime,arrivalTime);
+        tests.Near(candidate->eta,expected.eta,"dispatch ETA uses scheduled completion remainder");
+        tests.Near(candidate->cost,expected.cost,"dispatch cost uses scheduled completion remainder");
+        tests.Check(std::abs(candidate->eta-staleScore.eta)>0.1,
+            "dispatch does not use frozen Elevator action duration");
+        tests.Check(simulation.ValidateState(),"mid-action arrival remains valid");
+    });
     tests.Run("speed equivalence with random events", [&] {
         auto config=Config(); config.passengerRate=0.4; config.simulationDuration=200;
         Simulation a,b; a.Initialize(config,123); config.simulationSpeed=5; b.Initialize(config,123);
@@ -401,6 +577,20 @@ int main()
         Simulation a,b; a.Initialize(config,123); b.Initialize(config,123); a.Start(); a.Update(80); a.Reset();
         tests.Check(a.GetRandomSeed()==123 && a.GetPassengerSnapshots().empty() && a.GetHallCallSnapshots().empty(),"reset clears live state");
         a.Start(); b.Start(); a.Update(80); b.Update(80); SameState(tests,a,b);
+    });
+    tests.Run("reset rebuilds rather than retaining event calendar", [&] {
+        constexpr std::uint32_t seed=222u;
+        auto config=Config(); config.passengerRate=1.0; config.simulationDuration=20;
+        const double firstArrival=FirstArrivalTime(config.passengerRate,seed);
+        Simulation simulation; tests.Check(simulation.Initialize(config,seed),"initialize reset calendar fixture");
+        simulation.Start(); simulation.Update(firstArrival+0.01);
+        tests.Check(simulation.GetStatisticsSnapshot().totalPassengerCount==1,"first calendar generated one passenger");
+        simulation.Reset(); simulation.Start(); simulation.Update(firstArrival/2.0);
+        tests.Check(simulation.GetStatisticsSnapshot().totalPassengerCount==0,"old calendar event was cleared");
+        simulation.Update(firstArrival/2.0);
+        tests.Check(simulation.GetStatisticsSnapshot().totalPassengerCount==1,
+            "rebuilt calendar replays exactly one first arrival");
+        tests.Check(simulation.ValidateState(),"reset calendar state remains valid");
     });
     tests.Run("failed initialize preserves future random stream", [&] {
         auto config=Config(); config.passengerRate=0.4;

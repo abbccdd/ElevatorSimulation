@@ -3,6 +3,7 @@
 #include "CommonTypes.h"
 #include "Dispatcher.h"
 #include "Elevator.h"
+#include "EventScheduler.h"
 #include "Floor.h"
 #include "Passenger.h"
 #include "../Statistics/Statistics.h"
@@ -78,10 +79,15 @@ private:
     std::uint32_t m_seed = 0;
     std::mt19937 m_random;
     double m_nextArrivalTime = 0.0;
+    EventScheduler m_eventScheduler;
+    // 绝对仿真完成时刻；无计时动作时为 infinity。
+    std::vector<double> m_elevatorScheduledTimes;
     bool m_dispatchDirty = true; // 仅模型事件置脏，帧边界不触发重评估。
     double m_lastReassessmentTime = UnsetTime;
 
-    void GenerateDuePassengers();
+    void GeneratePassengerArrival();
+    void AdvanceClockTo(double newTime);
+    void ScheduleMissingElevatorEvents();
     std::vector<ElevatorDispatchSnapshot> BuildDispatchSnapshots() const;
     HallCallDispatchSnapshot BuildHallCallSnapshot(const HallCallKey& key, const HallCall& call) const;
     bool DispatchCalls();

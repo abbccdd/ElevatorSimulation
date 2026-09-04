@@ -27,8 +27,9 @@ ElevatorSimulation/
 │  │  ├─ Passenger.h / Passenger.cpp       乘客模型、状态转换与时间戳
 │  │  ├─ Floor.h / Floor.cpp               楼层与上下行 ID FIFO 队列
 │  │  ├─ Elevator.h / Elevator.cpp         方向保持、S/T 计时与上下客状态机
+│  │  ├─ EventScheduler.h / .cpp           稳定最小堆事件日历
 │  │  ├─ Dispatcher.h / Dispatcher.cpp     Cost/ETA 与方向成本的 LOOK 群控
-│  │  └─ Simulation.h / Simulation.cpp     事件编排、随机到达、外呼归属与快照
+│  │  └─ Simulation.h / Simulation.cpp     DES 推进、随机到达、外呼归属与快照
 │  ├─ Statistics/
 │  │  └─ Statistics.h / Statistics.cpp     事件统计与只读快照
 │  ├─ ElevatorSimulation.cpp / .h         原 App 入口（未修改）
@@ -124,7 +125,7 @@ Snapshot 按值构造：`SimulationWorker` 将 UI 所需的 `SimulationUISnapsho
 | `Pause()` | 仅 Running → Paused |
 | `Resume()` | 仅 Paused → Running；不能代替首次 Start |
 | `Reset()` | 用最近成功的配置与同一个 seed 重建，回到 Ready；未初始化时无操作 |
-| `Update(deltaTime)` | Running 时按事件边界推进全部电梯、随机乘客、调度、上下客与统计；到总时长转 Finished |
+| `Update(deltaTime)` | Running 时从事件日历跳到下一事件，只推进到期电梯；统一处理同刻事件与零耗时收敛，到总时长转 Finished |
 | `IsRunning()` / `IsFinished()` / `GetState()` | 查询生命周期 |
 | `GetCurrentTime()` / `GetConfig()` | 查询时间与配置副本 |
 | `GetElevatorSnapshots()` / `GetFloorSnapshots()` | 按电梯 ID / 楼层升序返回状态副本 |
@@ -213,7 +214,7 @@ Hall Call 动态改派只由新乘客、到层、上下客完成和零耗时状�
 | 独立 Core/Statistics 测试，MSVC `/W4 /WX` | 406 项检查通过 |
 | Debug/x64、Release/x64 MFC 实际启动 | 通过，正确显示六部电梯分组、零乘客和中文文字 |
 | 原有“关于”对话框、主窗口“取消”/“确定”退出 | 通过 |
-| 工程编译项、筛选器与文件存在性 | 全部匹配，六个核心/统计源文件均禁用 PCH |
+| 工程编译项、筛选器与文件存在性 | 全部匹配，核心/统计源文件均禁用 PCH |
 
 以上是工程准备阶段的历史基线。本轮仍保留 406 项检查，只把一项“调度器永远返回未分配”的旧占位预期更新为有效空闲梯可分配。新增测试覆盖调度、单梯、联合流程、种子复现、分帧一致性、截止边界、2,000 人有限批次、高客流及一小时稳定性。本机日志保存在 build/verification/，不纳入源码交付。
 
@@ -244,6 +245,10 @@ Hall Call 动态改派只由新乘客、到层、上下客完成和零耗时状�
 | Dispatcher 性能（x64 `/O2`，默认 8 个评分线程） | N=6/30/60/120 为 1.28× / 2.59× / 3.95× / 4.46×；所有选择结果一致 |
 
 性能数据由 `Tests/RunDispatchPerformance.ps1 x64` 在 120 层混合 LOOK 任务快照上测得，每种 N 执行 120 次选择；它衡量候选评分，不代表完整 UI 帧率或所有机器的固定加速比。
+
+2026-09-04 离散事件内核：`EventScheduler` 使用 `priority_queue` 稳定最小堆，按时间、事件类型、电梯 ID、入队序号确定全序。`Simulation::Update` 不再扫描全部电梯寻找最近动作，也不再为推进时钟而对全部电梯调用 `Advance`；事件之间仍遍历电梯累计各状态统计。每梯的绝对动作完成时刻是调度快照中 `remainingActionTime` 的真实来源，`StabilizeCurrentTime` 继续只收敛调度、上下客开始及离站等零耗时变化。
+
+专项回归覆盖同刻多梯动作、动作与随机到达碰撞、两类截止边界、大步/小步完整状态一致、移动中到达请求的 ETA 剩余时间、固定 seed/四种客流、Sequential/Parallel、长时高流、Pause/Resume 与 Reset 清历。`Tests/RunSimulationPerformance.ps1` 用同一 MSVC `/O2`、seed 和 100 层/99 梯场景分别编译固定旧 HEAD 与当前代码，只报告 wall-clock、不设置易波动的速度门槛。
 
 以下保留固定归属贪心 `0fade61` 与联合分配初版 `e7b96a6` 的历史对照，不是本轮 Deferred 修复的重新测量。两版使用相同 S/T、FIFO 注入、seed 和 MSVC `/O2 /MD`；`Tests/RunDispatchComparison.ps1 x64` 可在 build 内导出固定旧基线与当前源码重新对照，不切换分支。对照程序不加入 MFC 可执行文件。平均等待包含上梯 T：
 

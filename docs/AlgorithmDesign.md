@@ -163,9 +163,11 @@ MFC 主线程不再持有或直接调用 Simulation。`SimulationWorker` 的独�
 
 每次命令或推进后，Worker 在自身线程调用 `GetUISnapshot()`，按值复制 UI 实际使用的电梯、楼层、Hall Call 和统计视图，再通过 C++17 `atomic_store(shared_ptr<const SimulationUISnapshot>)` 发布。高频 UI 快照不复制 Passenger 明细；测试和后续按需功能继续使用独立 `GetPassengerSnapshots()`。MFC 33 ms Timer 只 `atomic_load` 最近快照并更新控件，既不调用 Update，也不扫描或修改 Simulation。共享可写区域仅有短命令队列和最新 shared_ptr，没有给核心各容器增加 mutex。
 
-UI 只传真实秒；唯一乘倍速的位置是 `Simulation::Update`。本轮最大仿真增量先截断到总时长。每次取以下最小时间间隔，同时推进全部电梯：本轮 Update 剩余时间、下一名乘客到达、各梯下一动作完成时间。
+UI 只传真实秒；唯一乘倍速的位置是 `Simulation::Update`。本轮最大仿真增量先截断到总时长。消耗时间的事件由 `EventScheduler` 的 `priority_queue` 最小堆管理：PassengerArrival、SimulationEnd，以及每台 Moving/Boarding/Alighting 电梯唯一的 ElevatorAction。每梯另存绝对动作完成时刻；Update 直接跳到堆顶时间，只对事件所属电梯调用 `Advance`，不再扫描所有电梯的下一动作或推进未到期电梯。事件间隔内电梯状态不变，`AdvanceClockTo` 仍遍历全部电梯累计该段状态统计。
 
-同一时刻先处理全部电梯完成事件（稳定按 ID），再产生到达乘客，最后进行分配和停站处理。每次停站先下后上；开始 Boarding/Alighting 只是登记计时，完成必须等待后续事件。零耗时决策循环不会消耗 S/T，并设有依任务数计算的收敛保护，错误不会被静默忽略。
+事件全序依次比较绝对时间、类型（ElevatorAction、PassengerArrival、SimulationEnd）、ElevatorAction 的电梯 ID，最终用单调 sequence 消除完全相同键的偶然顺序。同一时刻先按 ID 完成全部电梯动作，再产生到达乘客，最后只调用一次 `StabilizeCurrentTime`，并为新进入计时状态的电梯补入后续事件。每次停站先下后上；开始 Boarding/Alighting 只是登记计时，完成必须等待后续事件。零耗时决策循环不会消耗 S/T，并设有依任务数计算的收敛保护，错误不会被静默忽略。
+
+由于未到期电梯不再随全局时钟反复执行部分 `Advance`，其对象内 `m_actionRemaining` 保留动作开始时的完整时长。Simulation 构造调度快照时用 `max(0, scheduledCompletionTime-currentTime)` 覆盖 `remainingActionTime`，因此 Dispatcher 的 LOOK/ETA/Cost 公式无需修改。暂停不改变日历中的绝对仿真时刻；Reset 清空旧历并用原 seed 重建首次到达与 SimulationEnd。截止时刻允许先完成恰好到期的 ElevatorAction，但不生成恰好截止的乘客，也不再启动新的零耗时后续服务。
 
 Hall Call 用 `(真实楼层, Up/Down)` 作为唯一键。每个方向外呼最多一台负责梯，尚未分配时 ID=-1。同一方向后来产生的乘客加入同一 FIFO 队列；待分配外呼跳过临时 Deferred，按最老三个 Active 连续分批规划。已分配请求在事件触发时按上述服务锁、原梯可行性及滞回条件改派，不在每帧反复抢单。
 

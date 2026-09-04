@@ -136,6 +136,12 @@ bool Simulation::Initialize(const SimulationConfig& config, std::uint32_t seed)
         Statistics statistics;
         std::mt19937 random(seed);
         const double nextArrival = NextArrivalTime(0.0, config.passengerRate, random);
+        EventScheduler eventScheduler;
+        if (nextArrival < config.simulationDuration)
+            eventScheduler.Push(nextArrival, SimulationEventType::PassengerArrival);
+        eventScheduler.Push(config.simulationDuration, SimulationEventType::SimulationEnd);
+        std::vector<double> elevatorScheduledTimes(static_cast<std::size_t>(config.elevatorCount),
+            std::numeric_limits<double>::infinity());
         floors.reserve(static_cast<std::size_t>(config.floorCount));
         elevators.reserve(static_cast<std::size_t>(config.elevatorCount));
         for (int index = 0; index < config.floorCount; ++index)
@@ -161,6 +167,8 @@ bool Simulation::Initialize(const SimulationConfig& config, std::uint32_t seed)
         m_seed = seed;
         m_random = std::move(random);
         m_nextArrivalTime = nextArrival;
+        m_eventScheduler = std::move(eventScheduler);
+        m_elevatorScheduledTimes = std::move(elevatorScheduledTimes);
         m_config = config;
         m_currentTime = 0.0;
         m_dispatchDirty = true;
@@ -213,42 +221,43 @@ void Simulation::Update(double deltaTime)
     const double remainingTime = m_config.simulationDuration - m_currentTime;
     const double targetTime = scaledTime < remainingTime ?
         m_currentTime + scaledTime : m_config.simulationDuration;
-    GenerateDuePassengers();
     StabilizeCurrentTime();
-    while (m_currentTime < targetTime)
+    ScheduleMissingElevatorEvents();
+    while (!m_eventScheduler.Empty() && m_eventScheduler.Top().time <= targetTime)
     {
-        const double toTarget = targetTime - m_currentTime;
-        const double toArrival = m_nextArrivalTime < m_config.simulationDuration ?
-            m_nextArrivalTime - m_currentTime : std::numeric_limits<double>::infinity();
-        double step = (std::min)(toTarget, toArrival);
-        for (const auto& elevator : m_elevators)
-            step = (std::min)(step, elevator.GetTimeToNextEvent());
-
-        std::vector<ElevatorEvent> events;
-        events.reserve(m_elevators.size());
-        for (auto& elevator : m_elevators)
+        const double eventTime = m_eventScheduler.Top().time;
+        AdvanceClockTo(eventTime);
+        bool simulationEnded = false;
+        // 比较的是入队时保存的同一绝对时间；同刻事件由堆的显式次序稳定弹出。
+        while (!m_eventScheduler.Empty() && m_eventScheduler.Top().time == eventTime)
         {
-            const auto before = elevator.GetSnapshot();
-            m_statistics.ElevatorTimeElapsed(before.id, step, before.state,
-                before.passengerCount == before.capacity);
-            events.push_back(elevator.Advance(step));
+            const ScheduledEvent scheduled = m_eventScheduler.Top();
+            m_eventScheduler.Pop();
+            if (scheduled.type == SimulationEventType::ElevatorAction)
+            {
+                const std::size_t index = static_cast<std::size_t>(scheduled.elevatorId);
+                m_elevatorScheduledTimes[index] = std::numeric_limits<double>::infinity();
+                auto& elevator = m_elevators[index];
+                const ElevatorEvent event = elevator.Advance(elevator.GetTimeToNextEvent());
+                if (event.type == ElevatorEventType::None)
+                    throw std::logic_error("Scheduled elevator action did not complete");
+                HandleElevatorEvent(scheduled.elevatorId, event);
+            }
+            else if (scheduled.type == SimulationEventType::PassengerArrival)
+                GeneratePassengerArrival();
+            else
+                simulationEnded = true;
         }
-        // 保持生成事件与帧结束的时间戳，不把 double 减加误差累积到下一轮。
-        m_currentTime = step == toTarget ? targetTime :
-            (step == toArrival ? m_nextArrivalTime : m_currentTime + step);
-        for (std::size_t index = 0; index < events.size(); ++index)
-            HandleElevatorEvent(static_cast<int>(index), events[index]);
-        if (m_currentTime < m_config.simulationDuration)
+        if (simulationEnded)
         {
-            GenerateDuePassengers();
-            StabilizeCurrentTime();
+            m_state = SimulationState::Finished;
+            break;
         }
+        StabilizeCurrentTime();
+        ScheduleMissingElevatorEvents();
     }
-    if (m_currentTime >= m_config.simulationDuration)
-    {
-        m_currentTime = m_config.simulationDuration;
-        m_state = SimulationState::Finished;
-    }
+    if (IsRunning() && m_currentTime < targetTime)
+        AdvanceClockTo(targetTime);
 }
 
 PassengerId Simulation::AddPassenger(int startFloor, int targetFloor)
@@ -271,15 +280,43 @@ PassengerId Simulation::AddPassenger(int startFloor, int targetFloor)
     return id;
 }
 
-void Simulation::GenerateDuePassengers()
+void Simulation::GeneratePassengerArrival()
 {
-    while (m_nextArrivalTime <= m_currentTime && m_nextArrivalTime < m_config.simulationDuration)
+    const auto [start, target] = GeneratePassengerRoute(
+        m_config.trafficPattern, m_config.floorCount, m_random);
+    if (AddPassenger(start, target) == InvalidPassengerId)
+        throw std::overflow_error("Passenger ID space exhausted");
+    m_nextArrivalTime = NextArrivalTime(m_nextArrivalTime, m_config.passengerRate, m_random);
+    if (m_nextArrivalTime < m_config.simulationDuration)
+        m_eventScheduler.Push(m_nextArrivalTime, SimulationEventType::PassengerArrival);
+}
+
+void Simulation::AdvanceClockTo(double newTime)
+{
+    const double elapsed = newTime - m_currentTime;
+    if (elapsed > 0.0)
     {
-        const auto [start, target] = GeneratePassengerRoute(
-            m_config.trafficPattern, m_config.floorCount, m_random);
-        if (AddPassenger(start, target) == InvalidPassengerId)
-            throw std::overflow_error("Passenger ID space exhausted");
-        m_nextArrivalTime = NextArrivalTime(m_nextArrivalTime, m_config.passengerRate, m_random);
+        for (const auto& elevator : m_elevators)
+        {
+            const auto snapshot = elevator.GetSnapshot();
+            m_statistics.ElevatorTimeElapsed(snapshot.id, elapsed, snapshot.state,
+                snapshot.passengerCount == snapshot.capacity);
+        }
+    }
+    m_currentTime = newTime;
+}
+
+void Simulation::ScheduleMissingElevatorEvents()
+{
+    for (std::size_t index = 0; index < m_elevators.size(); ++index)
+    {
+        if (std::isfinite(m_elevatorScheduledTimes[index])) continue;
+        const double remaining = m_elevators[index].GetTimeToNextEvent();
+        if (!std::isfinite(remaining)) continue;
+        const double completionTime = m_currentTime + remaining;
+        m_elevatorScheduledTimes[index] = completionTime;
+        m_eventScheduler.Push(completionTime, SimulationEventType::ElevatorAction,
+            static_cast<int>(index));
     }
 }
 
@@ -388,6 +425,9 @@ std::vector<ElevatorDispatchSnapshot> Simulation::BuildDispatchSnapshots() const
 
     for (std::size_t index = 0; index < snapshots.size(); ++index)
     {
+        if (std::isfinite(m_elevatorScheduledTimes[index]))
+            snapshots[index].remainingActionTime = (std::max)(0.0,
+                m_elevatorScheduledTimes[index] - m_currentTime);
         const auto elevatorState = snapshots[index].elevator;
         const auto& elevator = m_elevators[index];
         for (auto& stop : snapshots[index].stopServices)

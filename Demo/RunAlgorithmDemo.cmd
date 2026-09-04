@@ -52,6 +52,7 @@ cl /nologo /std:c++17 /EHsc /W4 /WX /utf-8 /MD /O2 /I"%DEMO_ROOT%\ElevatorSimula
     "%DEMO_ROOT%\ElevatorSimulation\Core\Passenger.cpp" ^
     "%DEMO_ROOT%\ElevatorSimulation\Core\Floor.cpp" ^
     "%DEMO_ROOT%\ElevatorSimulation\Core\Elevator.cpp" ^
+    "%DEMO_ROOT%\ElevatorSimulation\Core\EventScheduler.cpp" ^
     "%DEMO_ROOT%\ElevatorSimulation\Core\Dispatcher.cpp" ^
     "%DEMO_ROOT%\ElevatorSimulation\Core\FixedThreadPool.cpp" ^
     "%DEMO_ROOT%\ElevatorSimulation\Core\Simulation.cpp" ^
