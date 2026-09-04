@@ -7,10 +7,11 @@ namespace
         switch (type)
         {
         case SimulationEventType::ElevatorAction: return 0;
-        case SimulationEventType::PassengerArrival: return 1;
-        case SimulationEventType::SimulationEnd: return 2;
+        case SimulationEventType::TrafficPhaseChange: return 1;
+        case SimulationEventType::PassengerArrival: return 2;
+        case SimulationEventType::SimulationEnd: return 3;
         }
-        return 3;
+        return 4;
     }
 }
 

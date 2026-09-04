@@ -166,9 +166,20 @@ namespace
         return -std::log(uniform) / passengerRate;
     }
 
+    double NextUnitRandomForTest(std::mt19937& random)
+    {
+        return (static_cast<double>(random()) + 0.5) / 4294967296.0;
+    }
+
     void SameCompleteState(TestSuite& tests, const Simulation& left, const Simulation& right)
     {
         SameState(tests, left, right);
+        const auto leftUI = left.GetUISnapshot();
+        const auto rightUI = right.GetUISnapshot();
+        tests.Check(leftUI.trafficScenario == rightUI.trafficScenario &&
+            leftUI.activeTrafficPattern == rightUI.activeTrafficPattern &&
+            leftUI.trafficPhaseIndex == rightUI.trafficPhaseIndex,
+            "same complete traffic scenario state");
         const auto leftFloors = left.GetFloorSnapshots();
         const auto rightFloors = right.GetFloorSnapshots();
         tests.Check(leftFloors.size() == rightFloors.size(), "same complete floor count");
@@ -212,6 +223,7 @@ int main()
     tests.Run("event calendar has deterministic total ordering", [&] {
         EventScheduler scheduler;
         scheduler.Push(5.0,SimulationEventType::PassengerArrival);
+        scheduler.Push(5.0,SimulationEventType::TrafficPhaseChange);
         scheduler.Push(5.0,SimulationEventType::ElevatorAction,2);
         scheduler.Push(5.0,SimulationEventType::SimulationEnd);
         scheduler.Push(5.0,SimulationEventType::ElevatorAction,0);
@@ -224,6 +236,8 @@ int main()
                 scheduler.Top().elevatorId==id,"same-time elevators ordered by ID");
             scheduler.Pop();
         }
+        tests.Check(scheduler.Top().type==SimulationEventType::TrafficPhaseChange,
+            "phase change follows elevator batch"); scheduler.Pop();
         tests.Check(scheduler.Top().type==SimulationEventType::PassengerArrival,
             "passenger follows elevator batch"); scheduler.Pop();
         tests.Check(scheduler.Top().type==SimulationEventType::SimulationEnd,
@@ -443,6 +457,8 @@ int main()
             simulation.GetHallCallSnapshots()[0].assignedElevatorId==-1,"copy isolation");
     });
     tests.Run("uniform preserves legacy fixed-seed route sequence", [&] {
+        tests.Check(SimulationConfig{}.trafficScenario==TrafficScenario::Fixed,
+            "default traffic scenario is fixed");
         tests.Check(SimulationConfig{}.trafficPattern==TrafficPattern::Uniform,"default traffic is uniform");
         const auto passengers=RunTraffic(TrafficPattern::Uniform,123456u,50.0);
         const std::array<std::pair<int,int>,12> expected = {{
@@ -453,6 +469,81 @@ int main()
         for(std::size_t i=0;i<expected.size();++i)
             tests.Check(passengers[i].startFloor==expected[i].first &&
                 passengers[i].targetFloor==expected[i].second,"legacy uniform route");
+    });
+    tests.Run("office day exposes each phase and generates its traffic pattern", [&] {
+        auto config=TrafficConfig(TrafficPattern::Uniform,400.0);
+        config.trafficScenario=TrafficScenario::OfficeDay;
+        Simulation simulation; tests.Check(simulation.Initialize(config,20260904u),
+            "initialize office day phases");
+        simulation.Start(); simulation.Update(0.249999);
+        auto snapshot=simulation.GetUISnapshot();
+        tests.Check(snapshot.trafficScenario==TrafficScenario::OfficeDay &&
+            snapshot.trafficPhaseIndex==0 && snapshot.activeTrafficPattern==TrafficPattern::UpPeak,
+            "first quarter is morning up peak");
+        simulation.Update(0.000001); snapshot=simulation.GetUISnapshot();
+        tests.Check(snapshot.trafficPhaseIndex==1 &&
+            snapshot.activeTrafficPattern==TrafficPattern::InterFloor,
+            "quarter boundary enters daytime inter-floor phase");
+        simulation.Update(0.45); snapshot=simulation.GetUISnapshot();
+        tests.Check(snapshot.trafficPhaseIndex==2 &&
+            snapshot.activeTrafficPattern==TrafficPattern::DownPeak,
+            "seventy-percent boundary enters evening down peak");
+        simulation.Update(0.299999);
+
+        const auto passengers=simulation.GetPassengerSnapshots();
+        std::size_t morningCount=0, morningLobbyStarts=0;
+        std::size_t daytimeCount=0, daytimeAvoidsLobby=0;
+        std::size_t eveningCount=0, eveningLobbyTargets=0;
+        for(const auto& passenger:passengers)
+        {
+            if(passenger.requestTime<0.25)
+            {
+                ++morningCount;
+                if(passenger.startFloor==1) ++morningLobbyStarts;
+            }
+            else if(passenger.requestTime<0.70)
+            {
+                ++daytimeCount;
+                if(passenger.startFloor!=1 && passenger.targetFloor!=1) ++daytimeAvoidsLobby;
+            }
+            else
+            {
+                ++eveningCount;
+                if(passenger.targetFloor==1) ++eveningLobbyTargets;
+            }
+        }
+        tests.Check(morningCount>100 && daytimeCount>100 && eveningCount>100,
+            "every office phase has enough deterministic samples");
+        tests.Check(static_cast<double>(morningLobbyStarts)/morningCount>0.65,
+            "morning phase uses up-peak routes");
+        tests.Check(static_cast<double>(daytimeAvoidsLobby)/daytimeCount>0.80,
+            "daytime phase uses inter-floor routes");
+        tests.Check(static_cast<double>(eveningLobbyTargets)/eveningCount>0.65,
+            "evening phase uses down-peak routes");
+        tests.Check(simulation.ValidateState(),"office phase traffic remains valid");
+    });
+    tests.Run("phase boundary discards out-of-phase arrival candidate", [&] {
+        constexpr std::uint32_t seed=42u;
+        std::mt19937 random(seed);
+        const double firstLog=-std::log(NextUnitRandomForTest(random));
+        const double baseRate=firstLog/(26.0*1.5);
+        const double nextPhaseArrival=25.0-
+            std::log(NextUnitRandomForTest(random))/(baseRate*0.75);
+        tests.Check(nextPhaseArrival>26.0 && nextPhaseArrival<70.0,
+            "boundary fixture resample lies in daytime phase");
+
+        auto config=Config(); config.floorCount=20; config.passengerRate=baseRate;
+        config.simulationDuration=100; config.trafficScenario=TrafficScenario::OfficeDay;
+        Simulation simulation; tests.Check(simulation.Initialize(config,seed),
+            "initialize phase boundary fixture");
+        simulation.Start(); simulation.Update(26.0);
+        tests.Check(simulation.GetStatisticsSnapshot().totalPassengerCount==0,
+            "old-rate candidate at 26 seconds was not retained");
+        simulation.Update(nextPhaseArrival-26.0);
+        const auto passengers=simulation.GetPassengerSnapshots();
+        tests.Check(passengers.size()==1,"new phase produces one resampled arrival");
+        tests.Near(passengers[0].requestTime,nextPhaseArrival,
+            "arrival is sampled from phase boundary");
     });
     tests.Run("traffic patterns follow route distributions", [&] {
         for(const auto pattern:TrafficPatterns)
@@ -523,6 +614,73 @@ int main()
         large.Start(); small.Start(); large.Update(100.0);
         for(int frame=0;frame<2000;++frame) small.Update(0.05);
         SameCompleteState(tests,large,small);
+    });
+    tests.Run("office day is independent of update partition", [&] {
+        auto config=Config(); config.floorCount=12; config.elevatorCount=6; config.capacity=4;
+        config.moveTimePerFloor=1.25; config.personTime=0.75;
+        config.passengerRate=0.8; config.simulationDuration=100;
+        config.trafficScenario=TrafficScenario::OfficeDay;
+        Simulation large,small;
+        tests.Check(large.Initialize(config,918273u) && small.Initialize(config,918273u),
+            "initialize office partition comparison");
+        large.Start(); small.Start(); large.Update(100.0);
+        for(int frame=0;frame<2000;++frame) small.Update(0.05);
+        SameCompleteState(tests,large,small);
+        const auto snapshot=large.GetUISnapshot();
+        tests.Check(snapshot.trafficPhaseIndex==2 &&
+            snapshot.activeTrafficPattern==TrafficPattern::DownPeak,
+            "partition comparison crosses every office phase");
+    });
+    tests.Run("office day reset replays phases and passengers", [&] {
+        auto config=TrafficConfig(TrafficPattern::Uniform,120.0);
+        config.trafficScenario=TrafficScenario::OfficeDay;
+        Simulation simulation; tests.Check(simulation.Initialize(config,4567u),
+            "initialize office reset replay");
+        simulation.Start(); simulation.Update(0.999);
+        const auto expectedPassengers=simulation.GetPassengerSnapshots();
+        const auto expectedUI=simulation.GetUISnapshot();
+        tests.Check(expectedUI.trafficPhaseIndex==2 && expectedPassengers.size()>80,
+            "office replay fixture crosses all phases");
+        simulation.Reset(); simulation.Start(); simulation.Update(0.999);
+        SamePassengerSequence(tests,simulation.GetPassengerSnapshots(),expectedPassengers);
+        const auto replayUI=simulation.GetUISnapshot();
+        tests.Check(replayUI.trafficScenario==TrafficScenario::OfficeDay &&
+            replayUI.trafficPhaseIndex==expectedUI.trafficPhaseIndex &&
+            replayUI.activeTrafficPattern==expectedUI.activeTrafficPattern,
+            "reset replays office phase state");
+        tests.Check(simulation.ValidateState(),"office reset replay remains valid");
+    });
+    tests.Run("office day sequential and parallel dispatch agree", [&] {
+        auto config=Config(); config.floorCount=12; config.elevatorCount=6;
+        config.passengerRate=1.2; config.simulationDuration=100;
+        config.trafficScenario=TrafficScenario::OfficeDay;
+        Simulation sequential,parallel;
+        parallel.SetDispatcherExecutionMode(DispatcherExecutionMode::Parallel,4);
+        tests.Check(sequential.Initialize(config,20260904u) &&
+            parallel.Initialize(config,20260904u),"initialize office dispatcher modes");
+        sequential.Start(); parallel.Start();
+        for(int step=0;step<100;++step)
+        {
+            sequential.Update(1.0); parallel.Update(1.0);
+            SameCompleteState(tests,sequential,parallel);
+        }
+    });
+    tests.Run("simulation speed crosses office phases once", [&] {
+        auto config=Config(); config.passengerRate=0.0; config.simulationDuration=100;
+        config.simulationSpeed=5.0; config.trafficScenario=TrafficScenario::OfficeDay;
+        Simulation simulation; tests.Check(simulation.Initialize(config,42),
+            "initialize office speed fixture");
+        simulation.Start(); simulation.Update(4.9998);
+        tests.Check(simulation.GetUISnapshot().trafficPhaseIndex==0,
+            "real delta before scaled quarter stays in morning phase");
+        simulation.Update(0.0002);
+        tests.Near(simulation.GetCurrentTime(),25.0,"speed applied once at quarter boundary");
+        tests.Check(simulation.GetUISnapshot().trafficPhaseIndex==1,
+            "scaled quarter enters daytime phase");
+        simulation.Update(9.0);
+        tests.Near(simulation.GetCurrentTime(),70.0,"speed reaches seventy-percent boundary once");
+        tests.Check(simulation.GetUISnapshot().trafficPhaseIndex==2,
+            "scaled seventy percent enters evening phase");
     });
     tests.Run("arrival-time dispatch uses absolute scheduled remainder", [&] {
         constexpr std::uint32_t seed=123456u;
@@ -636,6 +794,25 @@ int main()
         tests.Check(fullTime>0,"full operation recorded");
         std::cout << "High flow: generated=" << stats.totalPassengerCount << ", arrived=" << stats.arrivedCount
             << ", waiting=" << stats.waitingCount << ", riding=" << stats.ridingCount << '\n';
+    });
+    tests.Run("high-flow office day remains consistent", [&] {
+        auto config=Config(); config.floorCount=20; config.elevatorCount=6; config.capacity=4;
+        config.moveTimePerFloor=0.3; config.personTime=0.2;
+        config.passengerRate=6; config.simulationDuration=120;
+        config.trafficScenario=TrafficScenario::OfficeDay;
+        Simulation simulation; tests.Check(simulation.Initialize(config,20260904u),
+            "initialize high-flow office day");
+        simulation.Start();
+        for(int sample=0;sample<240;++sample)
+        {
+            simulation.Update(0.5);
+            tests.Check(simulation.ValidateState(),"high-flow office invariants");
+        }
+        const auto stats=simulation.GetStatisticsSnapshot();
+        tests.Check(simulation.IsFinished() && stats.totalPassengerCount>600,
+            "high-flow office day reaches deadline with traffic");
+        tests.Check(simulation.GetUISnapshot().trafficPhaseIndex==2,
+            "high-flow office day completes evening phase");
     });
     tests.Run("one-hour stability", [&] {
         auto config=Config(); config.floorCount=20; config.elevatorCount=6; config.capacity=15;

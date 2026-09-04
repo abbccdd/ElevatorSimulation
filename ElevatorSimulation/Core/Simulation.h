@@ -82,10 +82,16 @@ private:
     EventScheduler m_eventScheduler;
     // 绝对仿真完成时刻；无计时动作时为 infinity。
     std::vector<double> m_elevatorScheduledTimes;
+    std::size_t m_trafficPhaseIndex = 0;
+    TrafficPattern m_activeTrafficPattern = TrafficPattern::Uniform;
+    double m_activePassengerRate = 0.0;
+    double m_currentPhaseEnd = 0.0;
     bool m_dispatchDirty = true; // 仅模型事件置脏，帧边界不触发重评估。
     double m_lastReassessmentTime = UnsetTime;
 
     void GeneratePassengerArrival();
+    void HandleTrafficPhaseChange();
+    void ScheduleNextPassengerArrival();
     void AdvanceClockTo(double newTime);
     void ScheduleMissingElevatorEvents();
     std::vector<ElevatorDispatchSnapshot> BuildDispatchSnapshots() const;

@@ -106,6 +106,17 @@ namespace
         default:
             return "trafficPattern is invalid";
         }
+        switch (config.trafficScenario)
+        {
+        case TrafficScenario::Fixed:
+        case TrafficScenario::OfficeDay:
+            break;
+        default:
+            return "trafficScenario is invalid";
+        }
+        if (config.trafficScenario == TrafficScenario::OfficeDay &&
+            !std::isfinite(config.passengerRate * 1.5))
+            return "OfficeDay passenger rate exceeds finite range";
         return nullptr;
     }
 }
@@ -135,10 +146,24 @@ bool Simulation::Initialize(const SimulationConfig& config, std::uint32_t seed)
         std::vector<Elevator> elevators;
         Statistics statistics;
         std::mt19937 random(seed);
-        const double nextArrival = NextArrivalTime(0.0, config.passengerRate, random);
+        const bool officeDay = config.trafficScenario == TrafficScenario::OfficeDay;
+        const TrafficPattern activeTrafficPattern = officeDay ?
+            TrafficPattern::UpPeak : config.trafficPattern;
+        const double activePassengerRate = officeDay ?
+            config.passengerRate * 1.5 : config.passengerRate;
+        const double currentPhaseEnd = officeDay ?
+            config.simulationDuration * 0.25 : config.simulationDuration;
+        const double nextArrival = NextArrivalTime(0.0, activePassengerRate, random);
         EventScheduler eventScheduler;
-        if (nextArrival < config.simulationDuration)
+        if (nextArrival < currentPhaseEnd)
             eventScheduler.Push(nextArrival, SimulationEventType::PassengerArrival);
+        if (officeDay)
+        {
+            eventScheduler.Push(config.simulationDuration * 0.25,
+                SimulationEventType::TrafficPhaseChange);
+            eventScheduler.Push(config.simulationDuration * 0.70,
+                SimulationEventType::TrafficPhaseChange);
+        }
         eventScheduler.Push(config.simulationDuration, SimulationEventType::SimulationEnd);
         std::vector<double> elevatorScheduledTimes(static_cast<std::size_t>(config.elevatorCount),
             std::numeric_limits<double>::infinity());
@@ -169,6 +194,10 @@ bool Simulation::Initialize(const SimulationConfig& config, std::uint32_t seed)
         m_nextArrivalTime = nextArrival;
         m_eventScheduler = std::move(eventScheduler);
         m_elevatorScheduledTimes = std::move(elevatorScheduledTimes);
+        m_trafficPhaseIndex = 0;
+        m_activeTrafficPattern = activeTrafficPattern;
+        m_activePassengerRate = activePassengerRate;
+        m_currentPhaseEnd = currentPhaseEnd;
         m_config = config;
         m_currentTime = 0.0;
         m_dispatchDirty = true;
@@ -243,6 +272,8 @@ void Simulation::Update(double deltaTime)
                     throw std::logic_error("Scheduled elevator action did not complete");
                 HandleElevatorEvent(scheduled.elevatorId, event);
             }
+            else if (scheduled.type == SimulationEventType::TrafficPhaseChange)
+                HandleTrafficPhaseChange();
             else if (scheduled.type == SimulationEventType::PassengerArrival)
                 GeneratePassengerArrival();
             else
@@ -283,11 +314,34 @@ PassengerId Simulation::AddPassenger(int startFloor, int targetFloor)
 void Simulation::GeneratePassengerArrival()
 {
     const auto [start, target] = GeneratePassengerRoute(
-        m_config.trafficPattern, m_config.floorCount, m_random);
+        m_activeTrafficPattern, m_config.floorCount, m_random);
     if (AddPassenger(start, target) == InvalidPassengerId)
         throw std::overflow_error("Passenger ID space exhausted");
-    m_nextArrivalTime = NextArrivalTime(m_nextArrivalTime, m_config.passengerRate, m_random);
-    if (m_nextArrivalTime < m_config.simulationDuration)
+    ScheduleNextPassengerArrival();
+}
+
+void Simulation::HandleTrafficPhaseChange()
+{
+    ++m_trafficPhaseIndex;
+    if (m_trafficPhaseIndex == 1)
+    {
+        m_activeTrafficPattern = TrafficPattern::InterFloor;
+        m_activePassengerRate = m_config.passengerRate * 0.75;
+        m_currentPhaseEnd = m_config.simulationDuration * 0.70;
+    }
+    else
+    {
+        m_activeTrafficPattern = TrafficPattern::DownPeak;
+        m_activePassengerRate = m_config.passengerRate * 1.5;
+        m_currentPhaseEnd = m_config.simulationDuration;
+    }
+    ScheduleNextPassengerArrival();
+}
+
+void Simulation::ScheduleNextPassengerArrival()
+{
+    m_nextArrivalTime = NextArrivalTime(m_currentTime, m_activePassengerRate, m_random);
+    if (m_nextArrivalTime < m_currentPhaseEnd)
         m_eventScheduler.Push(m_nextArrivalTime, SimulationEventType::PassengerArrival);
 }
 
@@ -684,6 +738,9 @@ SimulationUISnapshot Simulation::GetUISnapshot(bool workerActive) const
     snapshot.currentTime = m_currentTime;
     snapshot.randomSeed = m_seed;
     snapshot.config = m_config;
+    snapshot.trafficScenario = m_config.trafficScenario;
+    snapshot.activeTrafficPattern = m_activeTrafficPattern;
+    snapshot.trafficPhaseIndex = m_trafficPhaseIndex;
     snapshot.lastError = m_lastError;
     snapshot.elevators = GetElevatorSnapshots();
     snapshot.floors = GetFloorSnapshots();

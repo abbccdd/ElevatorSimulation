@@ -23,12 +23,22 @@ namespace
 	constexpr int ParameterControlIds[] = {
 		IDC_EDIT_FLOOR_COUNT, IDC_EDIT_ELEVATOR_COUNT, IDC_EDIT_CAPACITY,
 		IDC_EDIT_MOVE_TIME, IDC_EDIT_PERSON_TIME, IDC_EDIT_PASSENGER_RATE,
-		IDC_COMBO_TRAFFIC_PATTERN, IDC_EDIT_DURATION, IDC_EDIT_SEED, IDC_EDIT_SPEED
+		IDC_COMBO_TRAFFIC_SCENARIO, IDC_COMBO_TRAFFIC_PATTERN,
+		IDC_EDIT_DURATION, IDC_EDIT_SEED, IDC_EDIT_SPEED
+	};
+
+	constexpr int ParameterLabelIds[] = {
+		IDC_PARAMETER_LABEL_FIRST, IDC_PARAMETER_LABEL_FIRST + 1,
+		IDC_PARAMETER_LABEL_FIRST + 2, IDC_PARAMETER_LABEL_FIRST + 3,
+		IDC_PARAMETER_LABEL_FIRST + 4, IDC_PARAMETER_LABEL_FIRST + 5,
+		IDC_PARAMETER_LABEL_SCENARIO, IDC_PARAMETER_LABEL_FIRST + 6,
+		IDC_PARAMETER_LABEL_FIRST + 7, IDC_PARAMETER_LABEL_FIRST + 8,
+		IDC_PARAMETER_LABEL_FIRST + 9
 	};
 
 	constexpr const wchar_t* ParameterLabels[] = {
 		L"楼层数 L", L"电梯数量 N", L"容量 K", L"每层时间 S (s)",
-		L"上下客时间 T (s)", L"客流率 (人/仿真秒)", L"客流模式",
+		L"上下客时间 T (s)", L"客流率 (人/仿真秒)", L"客流场景", L"客流模式",
 		L"总时长 (s)", L"随机种子 seed", L"仿真倍速"
 	};
 
@@ -69,6 +79,24 @@ namespace
 		case SimulationState::Finished: return L"Finished / 已结束";
 		default: return L"Error / 未初始化";
 		}
+	}
+
+	const wchar_t* TrafficPatternText(TrafficPattern pattern)
+	{
+		switch (pattern)
+		{
+		case TrafficPattern::UpPeak: return L"上行高峰";
+		case TrafficPattern::DownPeak: return L"下行高峰";
+		case TrafficPattern::InterFloor: return L"层间交通";
+		default: return L"均匀随机";
+		}
+	}
+
+	const wchar_t* OfficePhaseText(std::size_t phaseIndex)
+	{
+		if (phaseIndex == 0) return L"早高峰";
+		if (phaseIndex == 1) return L"日间层间";
+		return L"晚高峰";
 	}
 
 	CString Utf8ToCString(const std::string& text)
@@ -158,6 +186,8 @@ BEGIN_MESSAGE_MAP(CElevatorSimulationDlg, CDialogEx)
 	ON_BN_CLICKED(IDC_BUTTON_SPEED_2, &CElevatorSimulationDlg::OnBnClickedSpeed2)
 	ON_BN_CLICKED(IDC_BUTTON_SPEED_5, &CElevatorSimulationDlg::OnBnClickedSpeed5)
 	ON_BN_CLICKED(IDC_BUTTON_SPEED_10, &CElevatorSimulationDlg::OnBnClickedSpeed10)
+	ON_CBN_SELCHANGE(IDC_COMBO_TRAFFIC_SCENARIO,
+		&CElevatorSimulationDlg::OnCbnSelchangeTrafficScenario)
 	ON_BN_CLICKED(IDC_BUTTON_PANEL_TOGGLE, &CElevatorSimulationDlg::OnBnClickedPanelToggle)
 	ON_NOTIFY(TCN_SELCHANGE, IDC_TAB_PAGES, &CElevatorSimulationDlg::OnTcnSelchangePages)
 	ON_NOTIFY(TCN_SELCHANGE, IDC_TAB_RIGHT, &CElevatorSimulationDlg::OnTcnSelchangeRightTabs)
@@ -260,6 +290,8 @@ void CElevatorSimulationDlg::CreateUIFramework()
 	m_headerTimeLabel.Create(L"模型时间：", labelStyle, CRect(), this, IDC_HEADER_TIME_LABEL);
 	m_headerSpeedLabel.Create(L"仿真倍速：", labelStyle, CRect(), this, IDC_HEADER_SPEED_LABEL);
 	m_headerSpeed.Create(L"x1", labelStyle, CRect(), this, IDC_HEADER_SPEED);
+	m_headerTraffic.Create(L"场景：固定模式 · 当前模式：均匀随机",
+		labelStyle, CRect(), this, IDC_HEADER_TRAFFIC);
 
 	m_leftPanel.Create(L"参数与控制", WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
 		CRect(), this, IDC_PANEL_LEFT);
@@ -278,6 +310,11 @@ void CElevatorSimulationDlg::CreateUIFramework()
 	m_parameterSection.SetFont(&m_sectionFont);
 	m_controlSection.SetFont(&m_sectionFont);
 	m_speedSection.SetFont(&m_sectionFont);
+	m_trafficScenarioCombo.Create(WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL |
+		CBS_DROPDOWNLIST, CRect(), this, IDC_COMBO_TRAFFIC_SCENARIO);
+	for (const wchar_t* item : { L"固定模式", L"办公楼日周期" })
+		m_trafficScenarioCombo.AddString(item);
+	m_trafficScenarioCombo.SetCurSel(0);
 	m_trafficPatternCombo.Create(WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL |
 		CBS_DROPDOWNLIST, CRect(), this, IDC_COMBO_TRAFFIC_PATTERN);
 	for (const wchar_t* item : { L"均匀随机", L"上行高峰", L"下行高峰", L"层间交通" })
@@ -287,7 +324,7 @@ void CElevatorSimulationDlg::CreateUIFramework()
 	for (std::size_t index = 0; index < m_parameterLabels.size(); ++index)
 	{
 		m_parameterLabels[index].Create(ParameterLabels[index], labelStyle, CRect(), this,
-			IDC_PARAMETER_LABEL_FIRST + static_cast<UINT>(index));
+			ParameterLabelIds[index]);
 	}
 
 	constexpr const wchar_t* SpeedLabels[] = { L"x1", L"x2", L"x5", L"x10" };
@@ -367,7 +404,7 @@ void CElevatorSimulationDlg::RelayoutUI()
 	const int clientHeight = MulDiv(client.Height(), 96, dpi);
 	const int margin = 12;
 	const int gap = 8;
-	const int headerHeight = 58;
+	const int headerHeight = 66;
 	const int leftWidth = 220;
 	const int tabsHeight = 31;
 	const int statsHeight = 94;
@@ -395,13 +432,14 @@ void CElevatorSimulationDlg::RelayoutUI()
 	const int headerInfoX = (std::max)(380, centerX);
 	const int headerInfoWidth = clientWidth - margin - headerInfoX;
 	const int headerPart = headerInfoWidth / 3;
-	place(m_headerStateLabel, headerInfoX, 12, 76, 30);
-	move(IDC_SIMULATION_STATE, headerInfoX + 76, 12, headerPart - 76, 30);
-	place(m_headerTimeLabel, headerInfoX + headerPart, 12, 76, 30);
-	move(IDC_MODEL_TIME, headerInfoX + headerPart + 76, 12, headerPart - 76, 30);
-	place(m_headerSpeedLabel, headerInfoX + headerPart * 2, 12, 76, 30);
-	place(m_headerSpeed, headerInfoX + headerPart * 2 + 76, 12,
-		headerInfoWidth - headerPart * 2 - 76, 30);
+	place(m_headerStateLabel, headerInfoX, 5, 76, 28);
+	move(IDC_SIMULATION_STATE, headerInfoX + 76, 5, headerPart - 76, 28);
+	place(m_headerTimeLabel, headerInfoX + headerPart, 5, 76, 28);
+	move(IDC_MODEL_TIME, headerInfoX + headerPart + 76, 5, headerPart - 76, 28);
+	place(m_headerSpeedLabel, headerInfoX + headerPart * 2, 5, 76, 28);
+	place(m_headerSpeed, headerInfoX + headerPart * 2 + 76, 5,
+		headerInfoWidth - headerPart * 2 - 76, 28);
+	place(m_headerTraffic, headerInfoX, 34, headerInfoWidth, 24);
 
 	place(m_leftPanel, margin, contentTop, leftWidth, contentBottom - contentTop);
 	const int leftInnerX = margin + 14;
@@ -415,8 +453,10 @@ void CElevatorSimulationDlg::RelayoutUI()
 	{
 		const int rowY = firstRowY + static_cast<int>(index) * rowHeight;
 		place(m_parameterLabels[index], leftInnerX, rowY, labelWidth - 6, 22);
-		move(ParameterControlIds[index], editX, rowY, editWidth,
-			ParameterControlIds[index] == IDC_COMBO_TRAFFIC_PATTERN ? 120 : 22);
+		const int controlId = ParameterControlIds[index];
+		move(controlId, editX, rowY, editWidth,
+			controlId == IDC_COMBO_TRAFFIC_SCENARIO ||
+			controlId == IDC_COMBO_TRAFFIC_PATTERN ? 120 : 22);
 	}
 
 	const int controlsY = firstRowY + static_cast<int>(m_parameterLabels.size()) * rowHeight + 8;
@@ -713,6 +753,13 @@ bool CElevatorSimulationDlg::ReadConfiguration(SimulationConfig& config, std::ui
 		return false;
 	}
 	config.trafficPattern = static_cast<TrafficPattern>(trafficPattern);
+	const int trafficScenario = m_trafficScenarioCombo.GetCurSel();
+	if (trafficScenario < 0 || trafficScenario > static_cast<int>(TrafficScenario::OfficeDay))
+	{
+		ShowInputError(L"请选择有效的客流场景。");
+		return false;
+	}
+	config.trafficScenario = static_cast<TrafficScenario>(trafficScenario);
 
 	CString seedText;
 	GetDlgItemTextW(IDC_EDIT_SEED, seedText);
@@ -751,6 +798,9 @@ void CElevatorSimulationDlg::UpdateControlStates(
 	{
 		GetDlgItem(controlId)->EnableWindow(active && ready);
 	}
+	const bool fixedScenario =
+		m_trafficScenarioCombo.GetCurSel() == static_cast<int>(TrafficScenario::Fixed);
+	m_trafficPatternCombo.EnableWindow(active && ready && fixedScenario);
 	for (auto& speedButton : m_speedButtons)
 		speedButton.EnableWindow(active && ready);
 }
@@ -1038,6 +1088,23 @@ void CElevatorSimulationDlg::RefreshSimulationView(bool forceBuildingRefresh)
 	CString modelTime;
 	modelTime.Format(L"%.1f / %.1f s", snapshot->currentTime, config.simulationDuration);
 	SetDlgItemTextW(IDC_MODEL_TIME, modelTime);
+	CString trafficText;
+	if (snapshot->trafficScenario == TrafficScenario::OfficeDay)
+	{
+		trafficText.Format(L"场景：办公楼日周期 · 当前阶段：%s",
+			OfficePhaseText(snapshot->trafficPhaseIndex));
+	}
+	else
+	{
+		trafficText.Format(L"场景：固定模式 · 当前模式：%s",
+			TrafficPatternText(snapshot->activeTrafficPattern));
+	}
+	m_headerTraffic.SetWindowTextW(trafficText);
+	if (snapshot->state != SimulationState::Ready &&
+		snapshot->state != SimulationState::Uninitialized)
+	{
+		m_trafficPatternCombo.SetCurSel(static_cast<int>(snapshot->activeTrafficPattern));
+	}
 	if (snapshot->state == SimulationState::Ready)
 	{
 		CString speedText;
@@ -1115,6 +1182,12 @@ void CElevatorSimulationDlg::OnBnClickedStart()
 		DispatcherExecutionMode::Parallel);
 	m_simulationWorker->Start();
 	RefreshSimulationView(true);
+}
+
+void CElevatorSimulationDlg::OnCbnSelchangeTrafficScenario()
+{
+	const auto snapshot = m_simulationWorker ? m_simulationWorker->GetLatestSnapshot() : nullptr;
+	UpdateControlStates(snapshot);
 }
 
 void CElevatorSimulationDlg::OnBnClickedPause()

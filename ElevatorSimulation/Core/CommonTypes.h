@@ -54,6 +54,12 @@ enum class TrafficPattern
     InterFloor
 };
 
+enum class TrafficScenario
+{
+    Fixed,
+    OfficeDay
+};
+
 using PassengerId = int;
 inline constexpr int InvalidElevatorId = -1;
 inline constexpr PassengerId InvalidPassengerId = -1;
@@ -71,6 +77,7 @@ struct SimulationConfig
     double passengerRate = 0.2;
     double simulationSpeed = 1.0;
     TrafficPattern trafficPattern = TrafficPattern::Uniform;
+    TrafficScenario trafficScenario = TrafficScenario::Fixed;
 };
 
 // 相同楼层返回 Idle；这不代表相同起终点的乘客合法。
@@ -250,6 +257,9 @@ struct SimulationUISnapshot
     double currentTime = 0.0;
     std::uint32_t randomSeed = 0;
     SimulationConfig config;
+    TrafficScenario trafficScenario = TrafficScenario::Fixed;
+    TrafficPattern activeTrafficPattern = TrafficPattern::Uniform;
+    std::size_t trafficPhaseIndex = 0;
     std::string lastError;
     std::vector<ElevatorSnapshot> elevators;
     std::vector<FloorSnapshot> floors;

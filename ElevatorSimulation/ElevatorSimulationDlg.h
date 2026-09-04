@@ -55,6 +55,7 @@ protected:
 	afx_msg void OnBnClickedSpeed2();
 	afx_msg void OnBnClickedSpeed5();
 	afx_msg void OnBnClickedSpeed10();
+	afx_msg void OnCbnSelchangeTrafficScenario();
 	afx_msg void OnBnClickedPanelToggle();
 	afx_msg void OnTcnSelchangePages(NMHDR* pNMHDR, LRESULT* pResult);
 	afx_msg void OnTcnSelchangeRightTabs(NMHDR* pNMHDR, LRESULT* pResult);
@@ -84,6 +85,7 @@ private:
 	CListCtrl m_elevatorList;
 	CListCtrl m_floorList;
 	HallCallDashboardList m_hallCallList;
+	CComboBox m_trafficScenarioCombo;
 	CComboBox m_trafficPatternCombo;
 	CFont m_titleFont;
 	CFont m_sectionFont;
@@ -93,6 +95,7 @@ private:
 	CStatic m_headerTimeLabel;
 	CStatic m_headerSpeedLabel;
 	CStatic m_headerSpeed;
+	CStatic m_headerTraffic;
 	CButton m_leftPanel;
 	CButton m_mainPanel;
 	CButton m_rightPanel;
@@ -110,7 +113,7 @@ private:
 	CStatic m_parameterSection;
 	CStatic m_controlSection;
 	CStatic m_speedSection;
-	std::array<CStatic, 10> m_parameterLabels;
+	std::array<CStatic, 11> m_parameterLabels;
 	std::array<CButton, 4> m_speedButtons;
 	std::array<CStatic, 6> m_statCards;
 	std::array<DashboardStatTitle, 6> m_statTitles;

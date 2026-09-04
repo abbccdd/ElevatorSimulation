@@ -9,6 +9,7 @@
 enum class SimulationEventType
 {
     ElevatorAction,
+    TrafficPhaseChange,
     PassengerArrival,
     SimulationEnd
 };

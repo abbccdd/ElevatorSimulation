@@ -163,9 +163,9 @@ MFC 主线程不再持有或直接调用 Simulation。`SimulationWorker` 的独�
 
 每次命令或推进后，Worker 在自身线程调用 `GetUISnapshot()`，按值复制 UI 实际使用的电梯、楼层、Hall Call 和统计视图，再通过 C++17 `atomic_store(shared_ptr<const SimulationUISnapshot>)` 发布。高频 UI 快照不复制 Passenger 明细；测试和后续按需功能继续使用独立 `GetPassengerSnapshots()`。MFC 33 ms Timer 只 `atomic_load` 最近快照并更新控件，既不调用 Update，也不扫描或修改 Simulation。共享可写区域仅有短命令队列和最新 shared_ptr，没有给核心各容器增加 mutex。
 
-UI 只传真实秒；唯一乘倍速的位置是 `Simulation::Update`。本轮最大仿真增量先截断到总时长。消耗时间的事件由 `EventScheduler` 的 `priority_queue` 最小堆管理：PassengerArrival、SimulationEnd，以及每台 Moving/Boarding/Alighting 电梯唯一的 ElevatorAction。每梯另存绝对动作完成时刻；Update 直接跳到堆顶时间，只对事件所属电梯调用 `Advance`，不再扫描所有电梯的下一动作或推进未到期电梯。事件间隔内电梯状态不变，`AdvanceClockTo` 仍遍历全部电梯累计该段状态统计。
+UI 只传真实秒；唯一乘倍速的位置是 `Simulation::Update`。本轮最大仿真增量先截断到总时长。消耗时间的事件由 `EventScheduler` 的 `priority_queue` 最小堆管理：PassengerArrival、OfficeDay 的 TrafficPhaseChange、SimulationEnd，以及每台 Moving/Boarding/Alighting 电梯唯一的 ElevatorAction。每梯另存绝对动作完成时刻；Update 直接跳到堆顶时间，只对事件所属电梯调用 `Advance`，不再扫描所有电梯的下一动作或推进未到期电梯。事件间隔内电梯状态不变，`AdvanceClockTo` 仍遍历全部电梯累计该段状态统计。
 
-事件全序依次比较绝对时间、类型（ElevatorAction、PassengerArrival、SimulationEnd）、ElevatorAction 的电梯 ID，最终用单调 sequence 消除完全相同键的偶然顺序。同一时刻先按 ID 完成全部电梯动作，再产生到达乘客，最后只调用一次 `StabilizeCurrentTime`，并为新进入计时状态的电梯补入后续事件。每次停站先下后上；开始 Boarding/Alighting 只是登记计时，完成必须等待后续事件。零耗时决策循环不会消耗 S/T，并设有依任务数计算的收敛保护，错误不会被静默忽略。
+事件全序依次比较绝对时间、类型（ElevatorAction、TrafficPhaseChange、PassengerArrival、SimulationEnd）、ElevatorAction 的电梯 ID，最终用单调 sequence 消除完全相同键的偶然顺序。同一时刻先按 ID 完成全部电梯动作，再切换客流阶段、产生到达乘客，最后只调用一次 `StabilizeCurrentTime`，并为新进入计时状态的电梯补入后续事件。每次停站先下后上；开始 Boarding/Alighting 只是登记计时，完成必须等待后续事件。零耗时决策循环不会消耗 S/T，并设有依任务数计算的收敛保护，错误不会被静默忽略。
 
 由于未到期电梯不再随全局时钟反复执行部分 `Advance`，其对象内 `m_actionRemaining` 保留动作开始时的完整时长。Simulation 构造调度快照时用 `max(0, scheduledCompletionTime-currentTime)` 覆盖 `remainingActionTime`，因此 Dispatcher 的 LOOK/ETA/Cost 公式无需修改。暂停不改变日历中的绝对仿真时刻；Reset 清空旧历并用原 seed 重建首次到达与 SimulationEnd。截止时刻允许先完成恰好到期的 ElevatorAction，但不生成恰好截止的乘客，也不再启动新的零耗时后续服务。
 
@@ -175,7 +175,7 @@ Hall Call 用 `(真实楼层, Up/Down)` 作为唯一键。每个方向外呼最�
 
 Passenger 仍由 Simulation 的注册表按值唯一拥有。同一轮 ID 从 0 递增，已到达后不复用；达到类型上限时明确失败。下梯完成时 Elevator 先移除 ID，Simulation 更新 Passenger 与 Statistics 后删除活动对象。`ValidateState()` 提供只读人数守恒、队列/轿厢 ID 唯一性、状态及外呼归属诊断。
 
-随机模型：`passengerRate = λ` 为**全楼平均人数 / 仿真秒**；`Δt = -ln(U)/λ`，U 严格位于 (0,1)。起点在 1~L 均匀取样，终点从另外 L-1 层均匀取样；0 速率表示不随机生成。产生人数不被强制等于 λ×时长。`mt19937` 归 Simulation 持有，改变帧大小不会重新抽样。`Initialize(config, seed)` 指定种子；无 seed 的原接口获取随机种子，`GetRandomSeed()` 可记录，`Reset()` 重用本轮 seed。复现以相同实现/工具链为准，不承诺不同标准库的分布实现逐位相同。
+随机模型：`passengerRate = λ` 为**全楼平均人数 / 仿真秒**；`Δt = -ln(U)/λ`，U 严格位于 (0,1)。Fixed 使用配置中的固定 TrafficPattern/λ，保持原固定 seed 轨迹。OfficeDay 固定为三段：0%~25% UpPeak/1.5λ、25%~70% InterFloor/0.75λ、70%~100% DownPeak/1.5λ。到达候选只有严格早于当前阶段终点才入历；否则等待 TrafficPhaseChange 后从边界重新抽样，利用指数分布无记忆性，不保存或取消旧到达。0 速率表示不随机生成。`mt19937` 归 Simulation 持有，改变帧大小不会重新抽样；`Reset()` 重用本轮 seed 并重建全部阶段事件。
 
 允许在 Ready/Running/Paused 时用 `AddPassenger` 在当前时刻手工加入乘客，供测试或后续演示使用。非法输入不消耗 ID，Uninitialized/Finished 禁止注入。
 

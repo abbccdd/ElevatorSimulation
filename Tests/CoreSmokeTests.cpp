@@ -115,6 +115,9 @@ namespace
         auto invalidPattern = valid;
         invalidPattern.trafficPattern = static_cast<TrafficPattern>(999);
         reject(invalidPattern);
+        auto invalidScenario = valid;
+        invalidScenario.trafficScenario = static_cast<TrafficScenario>(999);
+        reject(invalidScenario);
         auto noPassengers = valid;
         noPassengers.passengerRate = 0.0;
         Check(simulation.Initialize(noPassengers) && simulation.GetLastError().empty(),
