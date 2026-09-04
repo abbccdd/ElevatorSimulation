@@ -4,7 +4,7 @@
 
 #include <afxcmn.h>
 #include <afxwin.h>
-#include <algorithm>
+#include <cstddef>
 
 // 底部 KPI 的双语标题。保留原有动态创建/布局方式，只负责绘制，
 // 避免窄卡片下英文 Static 文本被裁剪或出现异常显示。
@@ -38,7 +38,7 @@ protected:
         {
             CRect top = client;
             CRect bottom = client;
-            const int split = client.top + client.Height() / 2;
+            const int split = static_cast<int>(client.top) + client.Height() / 2;
             top.bottom = split + 1;
             bottom.top = split - 1;
 
@@ -83,7 +83,8 @@ private:
             CRect headerRect;
             header->GetWindowRect(&headerRect);
             ScreenToClient(&headerRect);
-            contentTop = (std::max)(contentTop, headerRect.bottom + 10);
+            const int headerBottom = static_cast<int>(headerRect.bottom) + 10;
+            if (headerBottom > contentTop) contentTop = headerBottom;
         }
 
         const int itemCount = GetItemCount();
@@ -91,14 +92,25 @@ private:
         {
             CRect lastItem;
             if (GetItemRect(itemCount - 1, &lastItem, LVIR_BOUNDS))
-                contentTop = (std::max)(contentTop, lastItem.bottom + 16);
+            {
+                const int itemBottom = static_cast<int>(lastItem.bottom) + 16;
+                if (itemBottom > contentTop) contentTop = itemBottom;
+            }
         }
 
-        // 列表本身优先；只有确实有较大空白时才显示摘要。
-        if (client.bottom - contentTop < 170) return;
+        const int clientBottom = static_cast<int>(client.bottom);
+        const int clientLeft = static_cast<int>(client.left);
+        const int clientRight = static_cast<int>(client.right);
 
-        CRect card(client.left + 10, contentTop,
-            client.right - 10, (std::min)(client.bottom - 12, contentTop + 198));
+        // 列表本身优先；只有确实有较大空白时才显示摘要。
+        if (clientBottom - contentTop < 170) return;
+
+        const int preferredBottom = contentTop + 198;
+        const int availableBottom = clientBottom - 12;
+        const int cardBottom = preferredBottom < availableBottom ? preferredBottom : availableBottom;
+
+        CRect card;
+        card.SetRect(clientLeft + 10, contentTop, clientRight - 10, cardBottom);
         if (card.Height() < 160) return;
 
         dc.FillSolidRect(card, RGB(248, 250, 252));
@@ -139,10 +151,15 @@ private:
             }
         }
 
-        const int bodyTop = titleRect.bottom + 8;
+        const int bodyTop = static_cast<int>(titleRect.bottom) + 8;
         const int half = card.Width() / 2;
-        CRect left(card.left + 12, bodyTop, card.left + half - 4, bodyTop + 62);
-        CRect right(card.left + half + 4, bodyTop, card.right - 12, bodyTop + 62);
+
+        CRect left;
+        left.SetRect(static_cast<int>(card.left) + 12, bodyTop,
+            static_cast<int>(card.left) + half - 4, bodyTop + 62);
+        CRect right;
+        right.SetRect(static_cast<int>(card.left) + half + 4, bodyTop,
+            static_cast<int>(card.right) - 12, bodyTop + 62);
 
         CString leftText;
         leftText.Format(L"当前外呼  %d\r\n等待乘客  %zu", itemCount, totalWaiting);
@@ -152,14 +169,18 @@ private:
         dc.DrawTextW(leftText, left, DT_LEFT | DT_TOP | DT_NOPREFIX);
         dc.DrawTextW(rightText, right, DT_LEFT | DT_TOP | DT_NOPREFIX);
 
-        CRect trafficRect(card.left + 12, bodyTop + 68, card.right - 12, bodyTop + 94);
+        CRect trafficRect;
+        trafficRect.SetRect(static_cast<int>(card.left) + 12, bodyTop + 68,
+            static_cast<int>(card.right) - 12, bodyTop + 94);
         CString trafficText;
         trafficText.Format(L"当前客流：%s", traffic.GetString());
         dc.SetTextColor(RGB(45, 83, 128));
         dc.DrawTextW(trafficText, trafficRect,
             DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
-        CRect hintRect(card.left + 12, bodyTop + 100, card.right - 12, card.bottom - 8);
+        CRect hintRect;
+        hintRect.SetRect(static_cast<int>(card.left) + 12, bodyTop + 100,
+            static_cast<int>(card.right) - 12, static_cast<int>(card.bottom) - 8);
         dc.SetTextColor(RGB(112, 120, 130));
         dc.DrawTextW(L"提示：点击任一外呼，可查看 ETA / Cost 候选及当前归属说明。",
             hintRect, DT_LEFT | DT_TOP | DT_WORDBREAK | DT_NOPREFIX);
