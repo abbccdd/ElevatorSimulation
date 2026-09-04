@@ -8,6 +8,7 @@
 #include "ElevatorBuildingView.h"
 #include "StatisticsTrendView.h"
 #include "DashboardControls.h"
+#include "ElevatorDetailDashboardLarge.h"
 
 #include <array>
 #include <chrono>
@@ -104,7 +105,7 @@ private:
 	CStatic m_algorithmPageSummary;
 	CListCtrl m_algorithmCandidateList;
 	CStatic m_elevatorDetailTitle;
-	ElevatorDetailDashboard m_elevatorDetailBody;
+	ElevatorDetailDashboardLarge m_elevatorDetailBody;
 	CStatic m_algorithmPlaceholder;
 	CStatic m_parameterSection;
 	CStatic m_controlSection;
