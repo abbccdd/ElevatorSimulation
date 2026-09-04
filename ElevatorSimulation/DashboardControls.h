@@ -12,12 +12,21 @@ class DashboardStatTitle : public CStatic
 protected:
     LRESULT WindowProc(UINT message, WPARAM wParam, LPARAM lParam) override
     {
+        if (message == WM_ERASEBKGND) return TRUE;
         if (message != WM_PAINT)
             return CStatic::WindowProc(message, wParam, lParam);
 
-        CPaintDC dc(this);
+        CPaintDC paintDc(this);
         CRect client;
         GetClientRect(&client);
+        if (client.IsRectEmpty()) return 0;
+
+        CDC dc;
+        dc.CreateCompatibleDC(&paintDc);
+        CBitmap bitmap;
+        bitmap.CreateCompatibleBitmap(&paintDc, client.Width(), client.Height());
+        CBitmap* oldBitmap = dc.SelectObject(&bitmap);
+
         dc.FillSolidRect(client, ::GetSysColor(COLOR_3DFACE));
         dc.SetBkMode(TRANSPARENT);
         if (GetFont() != nullptr) dc.SelectObject(GetFont());
@@ -45,6 +54,9 @@ protected:
             dc.DrawTextW(English[index], bottom,
                 DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         }
+
+        paintDc.BitBlt(0, 0, client.Width(), client.Height(), &dc, 0, 0, SRCCOPY);
+        dc.SelectObject(oldBitmap);
         return 0;
     }
 };
@@ -172,7 +184,6 @@ private:
     }
 };
 
-// 保持 CTabCtrl 的标准行为；详情面板内部另提供明确的返回按钮。
 class DashboardRightTabs : public CTabCtrl
 {
 };
@@ -195,19 +206,45 @@ protected:
                     if (available > position->cy) position->cy = available;
                 }
             }
+            return CStatic::WindowProc(message, wParam, lParam);
         }
-        else if (message == WM_LBUTTONUP)
+        if (message == WM_SETTEXT)
+        {
+            const wchar_t* incoming = reinterpret_cast<const wchar_t*>(lParam);
+            const CString next = incoming != nullptr ? incoming : L"";
+            if (next != m_sourceText)
+            {
+                m_sourceText = next;
+                Invalidate(FALSE);
+            }
+            return TRUE;
+        }
+        if (message == WM_GETTEXTLENGTH)
+            return static_cast<LRESULT>(m_sourceText.GetLength());
+        if (message == WM_GETTEXT)
+        {
+            if (lParam == 0 || wParam == 0) return 0;
+            wchar_t* buffer = reinterpret_cast<wchar_t*>(lParam);
+            const int capacity = static_cast<int>(wParam);
+            const int count = m_sourceText.GetLength() < capacity - 1 ?
+                m_sourceText.GetLength() : capacity - 1;
+            if (count > 0) std::wmemcpy(buffer, m_sourceText.GetString(), count);
+            buffer[count] = L'\0';
+            return count;
+        }
+        if (message == WM_ERASEBKGND)
+            return TRUE;
+        if (message == WM_LBUTTONUP)
         {
             const int x = static_cast<short>(LOWORD(lParam));
             const int y = static_cast<short>(HIWORD(lParam));
-            const CPoint point(x, y);
-            if (m_backRect.PtInRect(point))
+            if (m_backRect.PtInRect(CPoint(x, y)))
             {
                 ReturnToHallCalls();
                 return 0;
             }
         }
-        else if (message == WM_SETCURSOR)
+        if (message == WM_SETCURSOR)
         {
             CPoint point;
             ::GetCursorPos(&point);
@@ -218,13 +255,7 @@ protected:
                 return TRUE;
             }
         }
-        else if (message == WM_SETTEXT)
-        {
-            const LRESULT result = CStatic::WindowProc(message, wParam, lParam);
-            Invalidate(FALSE);
-            return result;
-        }
-        else if (message == WM_PAINT)
+        if (message == WM_PAINT)
         {
             PaintDashboard();
             return 0;
@@ -233,6 +264,7 @@ protected:
     }
 
 private:
+    CString m_sourceText;
     CRect m_backRect;
 
     static CString ExtractField(const CString& source, const wchar_t* label)
@@ -249,19 +281,25 @@ private:
 
     void PaintDashboard()
     {
-        CPaintDC dc(this);
+        CPaintDC paintDc(this);
         CRect client;
         GetClientRect(&client);
+        if (client.IsRectEmpty()) return;
+
+        CDC dc;
+        dc.CreateCompatibleDC(&paintDc);
+        CBitmap bitmap;
+        bitmap.CreateCompatibleBitmap(&paintDc, client.Width(), client.Height());
+        CBitmap* oldBitmap = dc.SelectObject(&bitmap);
+
         dc.FillSolidRect(client, ::GetSysColor(COLOR_3DFACE));
         dc.SetBkMode(TRANSPARENT);
         if (GetFont() != nullptr) dc.SelectObject(GetFont());
 
-        CString source;
-        GetWindowTextW(source);
-        const CString floor = ExtractField(source, L"当前楼层：");
-        const CString direction = ExtractField(source, L"方向：");
-        const CString state = ExtractField(source, L"状态：");
-        const CString load = ExtractField(source, L"载客：");
+        const CString floor = ExtractField(m_sourceText, L"当前楼层：");
+        const CString direction = ExtractField(m_sourceText, L"方向：");
+        const CString state = ExtractField(m_sourceText, L"状态：");
+        const CString load = ExtractField(m_sourceText, L"载客：");
 
         m_backRect.SetRect(static_cast<int>(client.left) + 4,
             static_cast<int>(client.top) + 4,
@@ -288,8 +326,7 @@ private:
         const int gap = 8;
         const int left = static_cast<int>(client.left) + 4;
         const int right = static_cast<int>(client.right) - 4;
-        const int width = right - left;
-        const int cellWidth = (width - gap) / 2;
+        const int cellWidth = (right - left - gap) / 2;
         const int firstTop = static_cast<int>(sectionTitle.bottom) + 6;
         const int cellHeight = 64;
 
@@ -348,6 +385,9 @@ private:
         dc.SetTextColor(RGB(45, 83, 128));
         dc.DrawTextW(trafficText, trafficRect,
             DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+        paintDc.BitBlt(0, 0, client.Width(), client.Height(), &dc, 0, 0, SRCCOPY);
+        dc.SelectObject(oldBitmap);
     }
 
     static void DrawCardBorder(CDC& dc, const CRect& bounds)
