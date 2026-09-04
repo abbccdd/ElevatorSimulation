@@ -1089,17 +1089,25 @@ void CElevatorSimulationDlg::RefreshSimulationView(bool forceBuildingRefresh)
 	modelTime.Format(L"%.1f / %.1f s", snapshot->currentTime, config.simulationDuration);
 	SetDlgItemTextW(IDC_MODEL_TIME, modelTime);
 	CString trafficText;
+	CString dashboardTrafficText;
 	if (snapshot->trafficScenario == TrafficScenario::OfficeDay)
 	{
 		trafficText.Format(L"场景：办公楼日周期 · 当前阶段：%s",
 			OfficePhaseText(snapshot->trafficPhaseIndex));
+		dashboardTrafficText.Format(L"办公楼日周期 · %s · %s",
+			OfficePhaseText(snapshot->trafficPhaseIndex),
+			TrafficPatternText(snapshot->activeTrafficPattern));
 	}
 	else
 	{
 		trafficText.Format(L"场景：固定模式 · 当前模式：%s",
 			TrafficPatternText(snapshot->activeTrafficPattern));
+		dashboardTrafficText.Format(L"固定模式 · %s",
+			TrafficPatternText(snapshot->activeTrafficPattern));
 	}
 	m_headerTraffic.SetWindowTextW(trafficText);
+	m_hallCallList.SetTrafficText(dashboardTrafficText);
+	m_elevatorDetailBody.SetTrafficText(dashboardTrafficText);
 	if (snapshot->state != SimulationState::Ready &&
 		snapshot->state != SimulationState::Uninitialized)
 	{

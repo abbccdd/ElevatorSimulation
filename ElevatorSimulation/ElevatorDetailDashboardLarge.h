@@ -11,6 +11,14 @@
 // The control owns all painting to avoid native Static text flicker.
 class ElevatorDetailDashboardLarge : public CStatic
 {
+public:
+    void SetTrafficText(const CString& text)
+    {
+        if (m_trafficText == text) return;
+        m_trafficText = text;
+        Invalidate(FALSE);
+    }
+
 protected:
     LRESULT WindowProc(UINT message, WPARAM wParam, LPARAM lParam) override
     {
@@ -88,6 +96,7 @@ protected:
 
 private:
     CString m_sourceText;
+    CString m_trafficText = L"--";
     CRect m_backRect;
     CFont m_buttonFont;
     CFont m_sectionFont;
@@ -238,23 +247,13 @@ private:
         DrawCardBorder(dc, groupCard);
         DrawGroupText(dc, groupCard);
 
-        CString traffic = L"--";
-        if (CWnd* parent = GetParent())
-        {
-            if (CWnd* trafficControl = parent->GetDlgItem(IDC_COMBO_TRAFFIC_PATTERN))
-            {
-                CString value;
-                trafficControl->GetWindowTextW(value);
-                if (!value.IsEmpty()) traffic = value;
-            }
-        }
         CRect trafficRect(left, bottomTrafficTop + gap / 2, right, bottom);
         dc.FillSolidRect(trafficRect, RGB(239, 245, 253));
         DrawBorder(dc, trafficRect, RGB(202, 214, 230));
         dc.SelectObject(&m_bodyFont);
         dc.SetTextColor(RGB(43, 82, 132));
         CString trafficText;
-        trafficText.Format(L"当前客流模式：%s", traffic.GetString());
+        trafficText.Format(L"当前客流：%s", m_trafficText.GetString());
         dc.DrawTextW(trafficText, trafficRect,
             DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 

@@ -63,6 +63,14 @@ protected:
 
 class HallCallDashboardList : public CListCtrl
 {
+public:
+    void SetTrafficText(const CString& text)
+    {
+        if (m_trafficText == text) return;
+        m_trafficText = text;
+        Invalidate(FALSE);
+    }
+
 protected:
     LRESULT WindowProc(UINT message, WPARAM wParam, LPARAM lParam) override
     {
@@ -76,6 +84,8 @@ protected:
     }
 
 private:
+    CString m_trafficText = L"--";
+
     void DrawSummary(CDC& dc)
     {
         CRect client;
@@ -138,17 +148,6 @@ private:
         }
         const int unassigned = itemCount - assigned;
 
-        CString traffic = L"--";
-        if (CWnd* parent = GetParent())
-        {
-            if (CWnd* trafficControl = parent->GetDlgItem(IDC_COMBO_TRAFFIC_PATTERN))
-            {
-                CString value;
-                trafficControl->GetWindowTextW(value);
-                if (!value.IsEmpty()) traffic = value;
-            }
-        }
-
         const int bodyTop = static_cast<int>(titleRect.bottom) + 8;
         const int half = card.Width() / 2;
         CRect left;
@@ -170,7 +169,7 @@ private:
         trafficRect.SetRect(static_cast<int>(card.left) + 12, bodyTop + 68,
             static_cast<int>(card.right) - 12, bodyTop + 94);
         CString trafficText;
-        trafficText.Format(L"当前客流：%s", traffic.GetString());
+        trafficText.Format(L"当前客流：%s", m_trafficText.GetString());
         dc.SetTextColor(RGB(45, 83, 128));
         dc.DrawTextW(trafficText, trafficRect,
             DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
@@ -190,6 +189,14 @@ class DashboardRightTabs : public CTabCtrl
 
 class ElevatorDetailDashboard : public CStatic
 {
+public:
+    void SetTrafficText(const CString& text)
+    {
+        if (m_trafficText == text) return;
+        m_trafficText = text;
+        Invalidate(FALSE);
+    }
+
 protected:
     LRESULT WindowProc(UINT message, WPARAM wParam, LPARAM lParam) override
     {
@@ -265,6 +272,7 @@ protected:
 
 private:
     CString m_sourceText;
+    CString m_trafficText = L"--";
     CRect m_backRect;
 
     static CString ExtractField(const CString& source, const wchar_t* label)
@@ -368,20 +376,10 @@ private:
             L"群控参与\r\n该电梯作为候选参与事件级 ETA / Cost 评分。实际外呼归属还会受到联合调度、动态改派与滞回策略影响。",
             groupText, DT_LEFT | DT_TOP | DT_WORDBREAK | DT_NOPREFIX);
 
-        CString traffic = L"--";
-        if (CWnd* parent = GetParent())
-        {
-            if (CWnd* trafficControl = parent->GetDlgItem(IDC_COMBO_TRAFFIC_PATTERN))
-            {
-                CString value;
-                trafficControl->GetWindowTextW(value);
-                if (!value.IsEmpty()) traffic = value;
-            }
-        }
         cardTop = static_cast<int>(groupCard.bottom) + 10;
         CRect trafficRect(left, cardTop, right, cardTop + 48);
         CString trafficText;
-        trafficText.Format(L"当前客流模式：%s", traffic.GetString());
+        trafficText.Format(L"当前客流：%s", m_trafficText.GetString());
         dc.SetTextColor(RGB(45, 83, 128));
         dc.DrawTextW(trafficText, trafficRect,
             DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
