@@ -7,6 +7,7 @@
 #include "Core/SimulationWorker.h"
 #include "ElevatorBuildingView.h"
 #include "StatisticsTrendView.h"
+#include "DashboardControls.h"
 
 #include <array>
 #include <chrono>
@@ -81,7 +82,7 @@ private:
 	std::unique_ptr<SimulationWorker> m_simulationWorker;
 	CListCtrl m_elevatorList;
 	CListCtrl m_floorList;
-	CListCtrl m_hallCallList;
+	HallCallDashboardList m_hallCallList;
 	CComboBox m_trafficPatternCombo;
 	CFont m_titleFont;
 	CFont m_sectionFont;
@@ -111,7 +112,7 @@ private:
 	std::array<CStatic, 10> m_parameterLabels;
 	std::array<CButton, 4> m_speedButtons;
 	std::array<CStatic, 6> m_statCards;
-	std::array<CStatic, 6> m_statTitles;
+	std::array<DashboardStatTitle, 6> m_statTitles;
 	std::array<CStatic, 6> m_statValues;
 	bool m_uiReady = false;
 	bool m_rightPanelExpanded = true;
