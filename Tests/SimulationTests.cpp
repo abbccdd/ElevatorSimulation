@@ -1102,5 +1102,111 @@ int main()
         tests.Check(sequential.ValidateState() && parallel.ValidateState(),
             "high-traffic predictive runs preserve invariants");
     });
+    tests.Run("simulation dispatch can preempt a repositioning elevator", [&] {
+        SimulationConfig config;
+        config.floorCount=20; config.elevatorCount=6; config.capacity=8;
+        config.moveTimePerFloor=2.0; config.personTime=1.0;
+        config.passengerRate=0.1; config.simulationDuration=100.0;
+        config.predictiveRebalancing=true;
+        Simulation simulation;
+        tests.Check(simulation.Initialize(config,42),"initialize reposition preemption fixture");
+        simulation.Start(); simulation.Update(0.01);
+        const auto before=simulation.GetElevatorSnapshots();
+        const auto repositioning=std::find_if(before.begin(),before.end(),[](const auto& elevator)
+        {
+            return elevator.state==ElevatorState::MovingUp &&
+                elevator.repositionTargetFloor==elevator.currentFloor+1 &&
+                elevator.repositionTargetFloor<4;
+        });
+        tests.Check(repositioning!=before.end(),"an elevator is moving toward a one-floor soft target");
+        const int elevatorId=repositioning->id;
+        const int departedFloor=repositioning->currentFloor;
+        const int oldRepositionTarget=repositioning->repositionTargetFloor;
+
+        tests.Check(simulation.AddPassenger(4,20)!=InvalidPassengerId,
+            "add nearby real hall call while repositioning");
+        simulation.Update(0.001);
+        const auto calls=simulation.GetHallCallSnapshots();
+        const auto call=std::find_if(calls.begin(),calls.end(),[](const auto& item)
+            { return item.floorNumber==4 && item.direction==Direction::Up; });
+        tests.Check(call!=calls.end() && call->assignedElevatorId==elevatorId,
+            "repositioning elevator wins real hall call through Simulation dispatch");
+        auto cars=simulation.GetElevatorSnapshots();
+        const auto assigned=std::find_if(cars.begin(),cars.end(),[elevatorId](const auto& elevator)
+            { return elevator.id==elevatorId; });
+        tests.Check(assigned!=cars.end() && assigned->repositionTargetFloor==InvalidFloor,
+            "real assignment clears soft target");
+        tests.Check(assigned->currentFloor==departedFloor && assigned->state==ElevatorState::MovingUp,
+            "already-started floor segment remains in progress");
+
+        simulation.Update(config.moveTimePerFloor);
+        cars=simulation.GetElevatorSnapshots();
+        const auto atOldTarget=std::find_if(cars.begin(),cars.end(),[elevatorId](const auto& elevator)
+            { return elevator.id==elevatorId; });
+        tests.Check(atOldTarget!=cars.end() && atOldTarget->currentFloor==oldRepositionTarget &&
+            atOldTarget->state==ElevatorState::MovingUp && atOldTarget->direction==Direction::Up &&
+            atOldTarget->repositionTargetFloor==InvalidFloor,
+            "at old soft target the elevator continues on the real LOOK route");
+        simulation.Update(config.moveTimePerFloor);
+        cars=simulation.GetElevatorSnapshots();
+        const auto beyondOldTarget=std::find_if(cars.begin(),cars.end(),[elevatorId](const auto& elevator)
+            { return elevator.id==elevatorId; });
+        tests.Check(beyondOldTarget!=cars.end() && beyondOldTarget->currentFloor>oldRepositionTarget &&
+            beyondOldTarget->state==ElevatorState::MovingUp,
+            "elevator passes the former reposition destination toward the real request");
+        tests.Check(simulation.ValidateState(),"preempted reposition state remains valid");
+    });
+    tests.Run("office day rebalancing follows active traffic phase", [&] {
+        SimulationConfig config;
+        config.floorCount=20; config.elevatorCount=6; config.capacity=8;
+        config.moveTimePerFloor=0.5; config.personTime=0.25;
+        config.passengerRate=0.5; config.simulationDuration=80.0;
+        config.trafficScenario=TrafficScenario::OfficeDay;
+        config.predictiveRebalancing=true;
+        Simulation simulation;
+        tests.Check(simulation.Initialize(config,673),"initialize OfficeDay rebalance fixture");
+        simulation.Start(); simulation.Update(0.01);
+        const auto upPeak=simulation.GetUISnapshot();
+        simulation.Update(20.0);
+        const auto interFloor=simulation.GetUISnapshot();
+        simulation.Update(36.0);
+        const auto downPeak=simulation.GetUISnapshot();
+
+        tests.Check(upPeak.trafficPhaseIndex==0 &&
+            upPeak.activeTrafficPattern==TrafficPattern::UpPeak,"first phase is UpPeak");
+        tests.Check(interFloor.trafficPhaseIndex==1 &&
+            interFloor.activeTrafficPattern==TrafficPattern::InterFloor,"middle phase is InterFloor");
+        tests.Check(downPeak.trafficPhaseIndex==2 &&
+            downPeak.activeTrafficPattern==TrafficPattern::DownPeak,"last phase is DownPeak");
+
+        const auto targets=[](const SimulationUISnapshot& snapshot)
+        {
+            std::vector<int> result;
+            for(const auto& elevator:snapshot.elevators)
+                if(elevator.repositionTargetFloor!=InvalidFloor)
+                    result.push_back(elevator.repositionTargetFloor);
+            return result;
+        };
+        const auto mean=[](const std::vector<int>& floors)
+        {
+            double sum=0.0;
+            for(int floor:floors) sum+=floor;
+            return sum/floors.size();
+        };
+        const auto lowCount=[](const std::vector<int>& floors)
+        {
+            return std::count_if(floors.begin(),floors.end(),[](int floor) { return floor<=5; });
+        };
+        const auto upTargets=targets(upPeak);
+        const auto interTargets=targets(interFloor);
+        const auto downTargets=targets(downPeak);
+        tests.Check(!upTargets.empty() && !interTargets.empty() && !downTargets.empty(),
+            "every OfficeDay phase exposes a reposition target distribution");
+        tests.Check(mean(upTargets)<mean(downTargets),
+            "UpPeak average reposition target is below DownPeak");
+        tests.Check(lowCount(interTargets)<lowCount(upTargets),
+            "InterFloor concentrates fewer reposition targets on low floors than UpPeak");
+        tests.Check(simulation.ValidateState(),"OfficeDay phase rebalancing state remains valid");
+    });
     return tests.Finish();
 }
