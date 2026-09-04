@@ -63,6 +63,7 @@ enum class TrafficScenario
 using PassengerId = int;
 inline constexpr int InvalidElevatorId = -1;
 inline constexpr PassengerId InvalidPassengerId = -1;
+inline constexpr int InvalidFloor = 0;
 inline constexpr double UnsetTime = -1.0;
 
 struct SimulationConfig
@@ -78,6 +79,7 @@ struct SimulationConfig
     double simulationSpeed = 1.0;
     TrafficPattern trafficPattern = TrafficPattern::Uniform;
     TrafficScenario trafficScenario = TrafficScenario::Fixed;
+    bool predictiveRebalancing = false;
 };
 
 // 相同楼层返回 Idle；这不代表相同起终点的乘客合法。
@@ -99,6 +101,7 @@ struct ElevatorSnapshot
     ElevatorState state = ElevatorState::Idle;
     int passengerCount = 0;
     int capacity = 0;
+    int repositionTargetFloor = InvalidFloor;
 };
 
 struct FloorSnapshot

@@ -118,7 +118,8 @@ namespace
         tests.Check(ea.size()==eb.size(),"same car count");
         for(std::size_t i=0;i<ea.size();++i)
             tests.Check(ea[i].currentFloor==eb[i].currentFloor && ea[i].direction==eb[i].direction &&
-                ea[i].state==eb[i].state && ea[i].passengerCount==eb[i].passengerCount,"same car state");
+                ea[i].state==eb[i].state && ea[i].passengerCount==eb[i].passengerCount &&
+                ea[i].repositionTargetFloor==eb[i].repositionTargetFloor,"same car state");
         const auto pa=a.GetPassengerSnapshots(), pb=b.GetPassengerSnapshots();
         tests.Check(pa.size()==pb.size(),"same active count");
         for(std::size_t i=0;i<pa.size();++i)
@@ -1050,6 +1051,56 @@ int main()
             "missing hall call observation is invalid");
         tests.Check(!sequential.GetDispatchObservation(5,Direction::Idle).valid,
             "invalid direction observation is invalid");
+    });
+    tests.Run("predictive rebalancing defaults off", [&] {
+        auto config=Config(); config.floorCount=20; config.elevatorCount=6;
+        config.passengerRate=0.5; config.simulationDuration=60;
+        tests.Check(!config.predictiveRebalancing,"configuration default remains disabled");
+        Simulation simulation; simulation.Initialize(config,42); simulation.Start(); simulation.Update(0.01);
+        for(const auto& elevator:simulation.GetElevatorSnapshots())
+            tests.Check(elevator.repositionTargetFloor==InvalidFloor,
+                "disabled mode leaves every idle car in place");
+        tests.Check(simulation.ValidateState(),"disabled state remains valid");
+    });
+    tests.Run("enabled rebalancing is frame partition and reset deterministic", [&] {
+        auto config=Config(); config.floorCount=20; config.elevatorCount=6; config.capacity=8;
+        config.moveTimePerFloor=1.0; config.personTime=0.5; config.passengerRate=0.8;
+        config.simulationDuration=80; config.predictiveRebalancing=true;
+        Simulation started; started.Initialize(config,31415); started.Start(); started.Update(0.01);
+        const auto startedCars=started.GetElevatorSnapshots();
+        tests.Check(std::any_of(startedCars.begin(),startedCars.end(),[](const auto& elevator)
+            { return elevator.repositionTargetFloor!=InvalidFloor; }),
+            "first Start performs an event-level predictive rebalance");
+        Simulation large,small; large.Initialize(config,31415); small.Initialize(config,31415);
+        large.Start(); small.Start(); large.Update(40.0);
+        for(int frame=0;frame<400;++frame) small.Update(0.1);
+        SameCompleteState(tests,large,small);
+        const auto expected=large.GetElevatorSnapshots();
+        large.Reset();
+        for(const auto& elevator:large.GetElevatorSnapshots())
+            tests.Check(elevator.repositionTargetFloor==InvalidFloor,"reset clears soft targets");
+        large.Start(); large.Update(40.0);
+        const auto replay=large.GetElevatorSnapshots();
+        tests.Check(expected.size()==replay.size(),"replay elevator count");
+        for(std::size_t index=0;index<expected.size();++index)
+            tests.Check(expected[index].currentFloor==replay[index].currentFloor &&
+                expected[index].direction==replay[index].direction &&
+                expected[index].state==replay[index].state &&
+                expected[index].passengerCount==replay[index].passengerCount &&
+                expected[index].repositionTargetFloor==replay[index].repositionTargetFloor,
+                "fixed seed replays reposition state");
+    });
+    tests.Run("enabled rebalancing is dispatcher-mode independent under load", [&] {
+        auto config=Config(); config.floorCount=30; config.elevatorCount=9; config.capacity=6;
+        config.moveTimePerFloor=0.5; config.personTime=0.25; config.passengerRate=3.0;
+        config.simulationDuration=120; config.predictiveRebalancing=true;
+        Simulation sequential,parallel;
+        parallel.SetDispatcherExecutionMode(DispatcherExecutionMode::Parallel,3);
+        sequential.Initialize(config,2718); parallel.Initialize(config,2718);
+        sequential.Start(); parallel.Start(); sequential.Update(120); parallel.Update(120);
+        SameCompleteState(tests,sequential,parallel);
+        tests.Check(sequential.ValidateState() && parallel.ValidateState(),
+            "high-traffic predictive runs preserve invariants");
     });
     return tests.Finish();
 }

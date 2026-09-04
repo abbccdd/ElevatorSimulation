@@ -202,6 +202,8 @@ bool Simulation::Initialize(const SimulationConfig& config, std::uint32_t seed)
         m_currentTime = 0.0;
         m_dispatchDirty = true;
         m_lastReassessmentTime = UnsetTime;
+        m_rebalanceDirty = true;
+        m_lastFleetRebalanceTime = UnsetTime;
         m_state = SimulationState::Ready;
         m_lastError.clear();
         return true;
@@ -308,6 +310,7 @@ PassengerId Simulation::AddPassenger(int startFloor, int targetFloor)
     ++m_nextPassengerId;
     m_statistics.PassengerCreated();
     m_dispatchDirty = true;
+    m_rebalanceDirty = true;
     return id;
 }
 
@@ -322,6 +325,8 @@ void Simulation::GeneratePassengerArrival()
 
 void Simulation::HandleTrafficPhaseChange()
 {
+    for (auto& elevator : m_elevators)
+        elevator.ClearRepositionTarget();
     ++m_trafficPhaseIndex;
     if (m_trafficPhaseIndex == 1)
     {
@@ -335,6 +340,7 @@ void Simulation::HandleTrafficPhaseChange()
         m_activePassengerRate = m_config.passengerRate * 1.5;
         m_currentPhaseEnd = m_config.simulationDuration;
     }
+    m_rebalanceDirty = true;
     ScheduleNextPassengerArrival();
 }
 
@@ -452,7 +458,49 @@ bool Simulation::DispatchCalls()
             }
         }
     }
+    if (changed) m_rebalanceDirty = true;
     return changed;
+}
+
+void Simulation::RebalanceIdleFleet()
+{
+    if (!m_config.predictiveRebalancing)
+    {
+        m_rebalanceDirty = false;
+        return;
+    }
+    if (!m_rebalanceDirty)
+        return;
+    if (m_lastFleetRebalanceTime == m_currentTime ||
+        (m_lastFleetRebalanceTime != UnsetTime &&
+            m_currentTime - m_lastFleetRebalanceTime < FleetRebalancer::FleetRebalanceCooldown))
+    {
+        // 冷却期内的本次模型事件不排队到未来帧边界；后续模型事件再重新请求。
+        m_rebalanceDirty = false;
+        return;
+    }
+
+    const auto snapshots = BuildDispatchSnapshots();
+    std::vector<int> idleElevatorIndices;
+    for (std::size_t index = 0; index < snapshots.size(); ++index)
+    {
+        const auto& snapshot = snapshots[index];
+        if (snapshot.elevator.state == ElevatorState::Idle &&
+            snapshot.elevator.passengerCount == 0 && !m_elevators[index].IsRepositioning() &&
+            snapshot.upTasks.empty() && snapshot.downTasks.empty() && snapshot.stopServices.empty())
+            idleElevatorIndices.push_back(static_cast<int>(index));
+    }
+    const auto plan = m_fleetRebalancer.BuildPlan(snapshots, idleElevatorIndices,
+        m_config.floorCount, m_activeTrafficPattern, m_activePassengerRate,
+        m_currentTime, m_config, m_dispatcher);
+    for (const auto& assignment : plan.assignments)
+    {
+        if (!m_elevators[static_cast<std::size_t>(assignment.elevatorId)].
+            SetRepositionTarget(assignment.targetFloor))
+            throw std::logic_error("Cannot commit fleet reposition assignment");
+    }
+    m_rebalanceDirty = false;
+    m_lastFleetRebalanceTime = m_currentTime;
 }
 
 HallCallDispatchSnapshot Simulation::BuildHallCallSnapshot(const HallCallKey& key, const HallCall& call) const
@@ -516,6 +564,7 @@ void Simulation::ReleaseHallCall(int floor, Direction direction, int elevatorId)
     const auto call = m_hallCalls.find({ floor, direction });
     if (call == m_hallCalls.end() || call->second.assignedElevatorId != elevatorId) return;
     m_dispatchDirty = true;
+    m_rebalanceDirty = true;
     const PassengerId next = m_floors[static_cast<std::size_t>(floor - 1)].Peek(direction);
     if (next == InvalidPassengerId)
         m_hallCalls.erase(call);
@@ -561,7 +610,11 @@ void Simulation::StabilizeCurrentTime()
             changed = true;
             m_dispatchDirty = true;
         }
-        if (!changed) return;
+        if (!changed)
+        {
+            RebalanceIdleFleet();
+            return;
+        }
     }
     throw std::logic_error("Zero-time service decisions did not converge");
 }
@@ -573,8 +626,11 @@ void Simulation::HandleElevatorEvent(int elevatorId, const ElevatorEvent& event)
     if (event.type == ElevatorEventType::FloorReached)
     {
         m_statistics.ElevatorMoved(elevatorId, event.emptyMovement);
+        if (m_elevators[static_cast<std::size_t>(elevatorId)].GetSnapshot().state == ElevatorState::Idle)
+            m_rebalanceDirty = true;
         return;
     }
+    m_rebalanceDirty = true;
     auto& passenger = m_passengers.at(event.passengerId);
     if (event.type == ElevatorEventType::Boarded)
     {

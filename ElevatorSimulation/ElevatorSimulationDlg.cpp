@@ -24,7 +24,8 @@ namespace
 		IDC_EDIT_FLOOR_COUNT, IDC_EDIT_ELEVATOR_COUNT, IDC_EDIT_CAPACITY,
 		IDC_EDIT_MOVE_TIME, IDC_EDIT_PERSON_TIME, IDC_EDIT_PASSENGER_RATE,
 		IDC_COMBO_TRAFFIC_SCENARIO, IDC_COMBO_TRAFFIC_PATTERN,
-		IDC_EDIT_DURATION, IDC_EDIT_SEED, IDC_EDIT_SPEED
+		IDC_EDIT_DURATION, IDC_EDIT_SEED, IDC_EDIT_SPEED,
+		IDC_CHECK_PREDICTIVE_REBALANCING
 	};
 
 	constexpr int ParameterLabelIds[] = {
@@ -320,6 +321,10 @@ void CElevatorSimulationDlg::CreateUIFramework()
 	for (const wchar_t* item : { L"均匀随机", L"上行高峰", L"下行高峰", L"层间交通" })
 		m_trafficPatternCombo.AddString(item);
 	m_trafficPatternCombo.SetCurSel(0);
+	m_predictiveRebalancingCheck.Create(L"预测式运力再平衡",
+		WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX,
+		CRect(), this, IDC_CHECK_PREDICTIVE_REBALANCING);
+	m_predictiveRebalancingCheck.SetCheck(BST_UNCHECKED);
 
 	for (std::size_t index = 0; index < m_parameterLabels.size(); ++index)
 	{
@@ -459,7 +464,9 @@ void CElevatorSimulationDlg::RelayoutUI()
 			controlId == IDC_COMBO_TRAFFIC_PATTERN ? 120 : 22);
 	}
 
-	const int controlsY = firstRowY + static_cast<int>(m_parameterLabels.size()) * rowHeight + 8;
+	const int rebalanceY = firstRowY + static_cast<int>(m_parameterLabels.size()) * rowHeight + 5;
+	place(m_predictiveRebalancingCheck, leftInnerX, rebalanceY, leftWidth - 28, 24);
+	const int controlsY = rebalanceY + 30;
 	place(m_controlSection, leftInnerX, controlsY, leftWidth - 28, 22);
 	const int actionY = controlsY + 28;
 	const int actionWidth = (leftWidth - 36) / 2;
@@ -760,6 +767,8 @@ bool CElevatorSimulationDlg::ReadConfiguration(SimulationConfig& config, std::ui
 		return false;
 	}
 	config.trafficScenario = static_cast<TrafficScenario>(trafficScenario);
+	config.predictiveRebalancing =
+		m_predictiveRebalancingCheck.GetCheck() == BST_CHECKED;
 
 	CString seedText;
 	GetDlgItemTextW(IDC_EDIT_SEED, seedText);
@@ -832,9 +841,13 @@ void CElevatorSimulationDlg::UpdateElevatorDetails(
 	title.Format(L"E%d", elevator->id + 1);
 	m_elevatorDetailTitle.SetWindowTextW(title);
 	CString details;
-	details.Format(L"当前楼层：%dF\r\n\r\n方向：%s\r\n\r\n状态：%s\r\n\r\n载客：%d / %d",
+	CString repositionTarget = L"--";
+	if (elevator->repositionTargetFloor != InvalidFloor)
+		repositionTarget.Format(L"%dF", elevator->repositionTargetFloor);
+	details.Format(L"当前楼层：%dF\r\n\r\n方向：%s\r\n\r\n状态：%s\r\n\r\n载客：%d / %d\r\n\r\n再平衡目标：%s",
 		elevator->currentFloor, DirectionText(elevator->direction),
-		ElevatorStateText(elevator->state), elevator->passengerCount, elevator->capacity);
+		ElevatorStateText(elevator->state), elevator->passengerCount, elevator->capacity,
+		repositionTarget.GetString());
 	m_elevatorDetailBody.SetWindowTextW(details);
 }
 

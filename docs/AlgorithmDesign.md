@@ -177,6 +177,40 @@ Passenger 仍由 Simulation 的注册表按值唯一拥有。同一轮 ID 从 0 
 
 随机模型：`passengerRate = λ` 为**全楼平均人数 / 仿真秒**；`Δt = -ln(U)/λ`，U 严格位于 (0,1)。Fixed 使用配置中的固定 TrafficPattern/λ，保持原固定 seed 轨迹。OfficeDay 固定为三段：0%~25% UpPeak/1.5λ、25%~70% InterFloor/0.75λ、70%~100% DownPeak/1.5λ。到达候选只有严格早于当前阶段终点才入历；否则等待 TrafficPhaseChange 后从边界重新抽样，利用指数分布无记忆性，不保存或取消旧到达。0 速率表示不随机生成。`mt19937` 归 Simulation 持有，改变帧大小不会重新抽样；`Reset()` 重用本轮 seed 并重建全部阶段事件。
 
+## 基于未来服务能力预测的梯群覆盖再平衡
+
+固定让空闲梯返回底层、中层或顶层，只反映预设位置比例，无法识别正在运行的电梯已经承诺了哪些内呼和外呼，也无法识别这些真实路线即将形成的未来服务能力。本系统采用 bounded greedy predictive rebalancing：先用所有忙碌/已承诺电梯形成未来 ETA 覆盖，再让真正空闲的电梯补充边际覆盖缺口。功能由 `SimulationConfig::predictiveRebalancing` 控制，默认关闭，因此旧配置、固定 seed 和既有调度结果保持不变。
+
+### 需求权重
+
+对未来外呼 `(f,d)` 定义下一位乘客在该楼层发出该方向外呼的概率 `w(f,d)`。权重直接来自 Passenger Route Generator，而不是经验楼层权重。Uniform 为：
+
+`w_U(f,Up) = (1/L) × (L-f)/(L-1)`，`w_U(f,Down) = (1/L) × (f-1)/(L-1)`。
+
+UpPeak 使用 `0.75 × PeakUp + 0.25 × Uniform`，且只有 `PeakUp(1,Up)=1`。DownPeak 使用 `0.75 × PeakDown + 0.25 × Uniform`，其中 `PeakDown(f,Down)=1/(L-1)`（`f=2..L`）。InterFloor 在 `L>=3` 时使用 `0.90 × q + 0.10 × Uniform`，其中：
+
+`q(f,Up) = (1/(L-1)) × (L-f)/(L-2)`，`q(f,Down) = (1/(L-1)) × (f-2)/(L-2)`（`f>=2`）。
+
+`L=2` 时沿用生成器的 Uniform fallback。OfficeDay 不维护第二套需求模型，直接把当前 `m_activeTrafficPattern` 和当前阶段的 active passenger rate 传入再平衡器。
+
+### ETA 覆盖与目标函数
+
+预测窗为 `H=max(15, 0.5×(L-1)×S)`。对每个未来外呼，忙碌梯使用 `ElevatorDispatcher::ScoreSnapshot(f,d,snapshot,currentTime,currentTime)` 计算 ETA；请求时间等于当前时间使 Aging 为零。由此当前方向、当前楼层间剩余时间、上下客、容量、内部目标、双向外呼和 LOOK 折返全部复用正式 Dispatcher 语义。覆盖值为 `C(f,d)=min(H,best ETA)`；没有可行忙碌梯时为 `H`。
+
+空闲梯在候选层 `x` 的能力由无乘客、无任务、无预留的虚拟 Idle `ElevatorDispatchSnapshot` 再次调用同一个 `ScoreSnapshot` 得到 `V(x,f,d)`，不另写距离 ETA。实现预计算 busy coverage 和所有 `VirtualETA[x][f][d]`。
+
+令 `M=λH`，当前覆盖的响应暴露为 `R(C)=M×Σw(f,d)C(f,d)`。候选驻点的边际收益为 `CoverageGain(x)=M×Σw(f,d)[C_before(f,d)-min(C_before(f,d),V(x,f,d))]`。空驶时间 `Tmove(i,x)=|c_i-x|S`，空驶惩罚系数为 0.25，因此 `NetGain(i,x)=CoverageGain(x)-0.25×Tmove(i,x)`。只有净收益严格大于零才移动；零流量自然没有主动再定位。
+
+### 贪心边际覆盖与软目标
+
+每轮先计算每个候选层的 CoverageGain，再在剩余空闲梯中选取到该层空驶代价最低者；全局选择 NetGain 最大的 `(elevator,floor)`，更新 `coverage=min(coverage,V)`，移除该梯后继续。已覆盖区域的后续边际收益会降低，因此多台空闲梯不会各自独立抢同一位置。该算法是有界贪心方法，不声称全局最优。
+
+再平衡目标保存在 `Elevator::m_repositionTargetFloor`，不加入 internal calls、Hall Calls、up/down tasks 或 stopServices，也不增加 `ElevatorState`。正在空驶的电梯仍以当前 Moving 状态、方向和 `remainingActionTime` 参与真实 Hall Call Dispatcher 评分。真实 Hall Call 或 Internal Target 一旦加入便立即清除软目标；已经开始的当前楼层间动作照常完成，到下一层后按真实 LOOK 路线继续。TrafficPhaseChange 可以清除旧软目标，Reset 会重建所有电梯并清空目标。
+
+Simulation 只在模型事件请求后、`StabilizeCurrentTime()` 的真实调度收敛末尾考虑再平衡，同一仿真时刻最多一次，普通冷却为 5 仿真秒；冷却期事件不会留下等待到 UI 帧边界执行的计划。不开新事件类型、线程、取消队列或 stale token。
+
+局限包括：只使用当前 TrafficPattern，不预测未来精确 Hall Call；以单请求 ETA 作为覆盖指标；贪心有限搜索不是全局最优；空驶惩罚是固定可解释系数，而不是学习结果。
+
 允许在 Ready/Running/Paused 时用 `AddPassenger` 在当前时刻手工加入乘客，供测试或后续演示使用。非法输入不消耗 ID，Uninitialized/Finished 禁止注入。
 
 时间区间约定：随机到达只产生于 `[0, simulationDuration)`；恰好在截止时刻完成的移动/上下客会计入，但绝不把时间推进到截止之后。截止时仍在等待、乘梯或传送中的乘客保持活动状态，用于统计积压，不自动延长到全员送达。

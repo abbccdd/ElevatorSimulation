@@ -21,7 +21,7 @@ foreach ($variant in @('baseline', 'current')) {
     $variantRoot = Join-Path $outputRoot $variant
     New-Item -ItemType Directory -Force $variantRoot | Out-Null
     $sourceFiles = @('Core\Passenger.cpp','Core\Floor.cpp','Core\Elevator.cpp','Core\Dispatcher.cpp','Core\Simulation.cpp','Statistics\Statistics.cpp')
-    if ($variant -eq 'current') { $sourceFiles += @('Core\EventScheduler.cpp', 'Core\FixedThreadPool.cpp') }
+    if ($variant -eq 'current') { $sourceFiles += @('Core\EventScheduler.cpp', 'Core\FixedThreadPool.cpp', 'Core\FleetRebalancer.cpp') }
     $sources = $sourceFiles |
         ForEach-Object { '"' + (Join-Path $sourceRoot $_) + '"' }
     $sourceArguments = $sources -join ' '

@@ -31,7 +31,9 @@ foreach ($variant in @('event-scan-baseline', 'event-calendar-current')) {
     $variantRoot = Join-Path $outputRoot $variant
     New-Item -ItemType Directory -Force $variantRoot | Out-Null
     $sourceFiles = @($commonSources)
-    if ($variant -eq 'event-calendar-current') { $sourceFiles += 'Core\EventScheduler.cpp' }
+    if ($variant -eq 'event-calendar-current') {
+        $sourceFiles += @('Core\EventScheduler.cpp', 'Core\FleetRebalancer.cpp')
+    }
     $sources = $sourceFiles | ForEach-Object { '"' + (Join-Path $sourceRoot $_) + '"' }
     $compileScript = Join-Path $variantRoot 'compile.cmd'
     $compileText = @"

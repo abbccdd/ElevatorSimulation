@@ -229,6 +229,7 @@
     <ClInclude Include="Core\EventScheduler.h" />
     <ClInclude Include="Core\Dispatcher.h" />
     <ClInclude Include="Core\FixedThreadPool.h" />
+    <ClInclude Include="Core\FleetRebalancer.h" />
     <ClInclude Include="Core\Simulation.h" />
     <ClInclude Include="Core\SimulationWorker.h" />
     <ClInclude Include="Statistics\Statistics.h" />
@@ -248,6 +249,9 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="Core\FixedThreadPool.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="Core\FleetRebalancer.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="Core\Simulation.cpp">
@@ -272,6 +276,7 @@
   <ItemGroup>
     <None Include="..\Tests\TestSupport.h" />
     <None Include="..\Tests\DispatcherTests.cpp" />
+    <None Include="..\Tests\FleetRebalancerTests.cpp" />
     <None Include="..\Tests\ElevatorTests.cpp" />
     <None Include="..\Tests\SimulationTests.cpp" />
     <None Include="..\Tests\ConcurrencyTests.cpp" />

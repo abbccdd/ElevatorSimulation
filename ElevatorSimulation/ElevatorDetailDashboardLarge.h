@@ -180,6 +180,7 @@ private:
         const CString direction = ExtractField(m_sourceText, L"方向：");
         const CString state = ExtractField(m_sourceText, L"状态：");
         const CString load = ExtractField(m_sourceText, L"载客：");
+        const CString repositionTarget = ExtractField(m_sourceText, L"再平衡目标：");
 
         const int left = static_cast<int>(client.left) + 6;
         const int right = static_cast<int>(client.right) - 6;
@@ -240,7 +241,7 @@ private:
 
         CRect taskCard(left, y, right, y + taskHeight);
         DrawCardBorder(dc, taskCard);
-        DrawTaskText(dc, taskCard, state);
+        DrawTaskText(dc, taskCard, state, repositionTarget);
 
         y = static_cast<int>(taskCard.bottom) + gap;
         CRect groupCard(left, y, right, bottomTrafficTop);
@@ -319,10 +320,16 @@ private:
         DrawBorder(dc, bar, RGB(199, 208, 220));
     }
 
-    void DrawTaskText(CDC& dc, const CRect& bounds, const CString& state)
+    void DrawTaskText(CDC& dc, const CRect& bounds, const CString& state,
+        const CString& repositionTarget)
     {
         CString description;
-        if (state.CompareNoCase(L"Idle") == 0)
+        if (repositionTarget != L"--")
+        {
+            description.Format(L"运力再平衡\r\n目标：%s\r\n当前无真实服务任务，群控根据未来 ETA 覆盖缺口进行低优先级再定位；真实请求可立即覆盖该软目标。",
+                repositionTarget.GetString());
+        }
+        else if (state.CompareNoCase(L"Idle") == 0)
             description = L"空闲待命。当前没有正在执行的楼层间动作，等待群控系统分配新的外呼或内部目标。";
         else if (state.Find(L"Moving") >= 0)
             description = L"正在执行 LOOK 方向保持运行。当前楼层间动作完成前，新请求不会强制改变运动方向。";

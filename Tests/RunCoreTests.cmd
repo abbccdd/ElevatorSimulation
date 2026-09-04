@@ -13,15 +13,15 @@ if errorlevel 1 exit /b 2
 if not exist "%~dp0..\build\core-tests\%TEST_ARCH%" mkdir "%~dp0..\build\core-tests\%TEST_ARCH%"
 pushd "%~dp0..\build\core-tests\%TEST_ARCH%"
 if errorlevel 1 exit /b 2
-set "TEST_SUITES=Dispatcher Elevator Simulation Concurrency"
+set "TEST_SUITES=Dispatcher Elevator FleetRebalancer Simulation Concurrency"
 if not "%~1"=="" if /i not "%~1"=="All" (
     set "TEST_SUITES="
-    for %%s in (Dispatcher Elevator Simulation Concurrency) do if /i "%~1"=="%%s" set "TEST_SUITES=%%s"
+    for %%s in (Dispatcher Elevator FleetRebalancer Simulation Concurrency) do if /i "%~1"=="%%s" set "TEST_SUITES=%%s"
 )
 if not defined TEST_SUITES (popd & exit /b 2)
 for %%s in (%TEST_SUITES%) do (
     if not exist "%~dp0%%sTests.cpp" (popd & exit /b 2)
-        cl /nologo /std:c++17 /EHsc /W4 /WX /utf-8 /MDd /Zi /I"%~dp0..\ElevatorSimulation" "%~dp0%%sTests.cpp" "%~dp0..\ElevatorSimulation\Core\Passenger.cpp" "%~dp0..\ElevatorSimulation\Core\Floor.cpp" "%~dp0..\ElevatorSimulation\Core\Elevator.cpp" "%~dp0..\ElevatorSimulation\Core\EventScheduler.cpp" "%~dp0..\ElevatorSimulation\Core\Dispatcher.cpp" "%~dp0..\ElevatorSimulation\Core\FixedThreadPool.cpp" "%~dp0..\ElevatorSimulation\Core\Simulation.cpp" "%~dp0..\ElevatorSimulation\Core\SimulationWorker.cpp" "%~dp0..\ElevatorSimulation\Statistics\Statistics.cpp" /Fe:%%sTests.exe
+        cl /nologo /std:c++17 /EHsc /W4 /WX /utf-8 /MDd /Zi /I"%~dp0..\ElevatorSimulation" "%~dp0%%sTests.cpp" "%~dp0..\ElevatorSimulation\Core\Passenger.cpp" "%~dp0..\ElevatorSimulation\Core\Floor.cpp" "%~dp0..\ElevatorSimulation\Core\Elevator.cpp" "%~dp0..\ElevatorSimulation\Core\EventScheduler.cpp" "%~dp0..\ElevatorSimulation\Core\Dispatcher.cpp" "%~dp0..\ElevatorSimulation\Core\FixedThreadPool.cpp" "%~dp0..\ElevatorSimulation\Core\FleetRebalancer.cpp" "%~dp0..\ElevatorSimulation\Core\Simulation.cpp" "%~dp0..\ElevatorSimulation\Core\SimulationWorker.cpp" "%~dp0..\ElevatorSimulation\Statistics\Statistics.cpp" /Fe:%%sTests.exe
         if errorlevel 1 goto test_failed
         %%sTests.exe
         if errorlevel 1 goto test_failed

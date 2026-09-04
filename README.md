@@ -29,7 +29,8 @@ ElevatorSimulation/
 │  │  ├─ Elevator.h / Elevator.cpp         方向保持、S/T 计时与上下客状态机
 │  │  ├─ EventScheduler.h / .cpp           稳定最小堆事件日历
 │  │  ├─ Dispatcher.h / Dispatcher.cpp     Cost/ETA 与方向成本的 LOOK 群控
-│  │  └─ Simulation.h / Simulation.cpp     DES 推进、随机到达、外呼归属与快照
+│  │  ├─ FleetRebalancer.h / .cpp           预测需求、ETA 覆盖与贪心边际再平衡
+│  │  └─ Simulation.h / Simulation.cpp      DES 推进、随机到达、外呼归属与快照
 │  ├─ Statistics/
 │  │  └─ Statistics.h / Statistics.cpp     事件统计与只读快照
 │  ├─ ElevatorSimulation.cpp / .h         原 App 入口（未修改）
@@ -80,9 +81,9 @@ ElevatorSimulation/
 - `PassengerState`：Waiting、Riding、Arrived。
 - `ElevatorState`：Idle、MovingUp、MovingDown、Boarding、Alighting、Stopped。
 - `SimulationState`：Uninitialized、Ready、Running、Paused、Finished，用于总控制器生命周期。
-- `SimulationConfig`：L/N/K、S 秒/层、T 秒/人、总时长、全楼到达速率、仿真倍速、`TrafficPattern` 客流模式与 `TrafficScenario` 场景；默认 `Fixed + Uniform`。
+- `SimulationConfig`：L/N/K、S 秒/层、T 秒/人、总时长、全楼到达速率、仿真倍速、`TrafficPattern` 客流模式、`TrafficScenario` 场景与 `predictiveRebalancing` 开关；默认 `Fixed + Uniform`，预测式再平衡默认关闭。
 - `PassengerId`、`InvalidPassengerId=-1`、`InvalidElevatorId=-1`、`UnsetTime=-1.0`。
-- 原 `ElevatorSnapshot`、`FloorSnapshot`、`StatisticsSnapshot`、`ElevatorStatisticsSnapshot`；新增只读调度、乘客、外呼快照、UI 高频视图 `SimulationUISnapshot`，以及单梯动作事件，不重新定义原状态类型。
+- 原 `ElevatorSnapshot`、`FloorSnapshot`、`StatisticsSnapshot`、`ElevatorStatisticsSnapshot`；新增只读调度、乘客、外呼快照、UI 高频视图 `SimulationUISnapshot`，以及单梯动作事件，不重新定义原状态类型。`ElevatorSnapshot::repositionTargetFloor` 仅供展示，`InvalidFloor` 表示没有软目标。
 - 无状态函数 `GetDirection(startFloor, targetFloor)`；同层返回 Idle，但同层起终点的乘客仍属非法。
 
 禁止在其他文件重新定义 `ElevatorDirection`、`MoveDirection`、`PassengerStatus`、`ElevatorStatus`、`Config`、`SimulationParameter` 等语义重复类型。修改公共契约前，必须检查全部调用点并告知受影响的模块负责人。
@@ -147,6 +148,8 @@ Snapshot 按值构造：`SimulationWorker` 将 UI 所需的 `SimulationUISnapsho
 
 Passenger/Floor/Elevator 的直接构造函数对基础非法字段抛出 `std::invalid_argument`。Simulation 检查乘客楼层上界，构造 Elevator 时传入完整配置使其校验任务上界；旧三参数 Elevator 构造函数仍保留兼容性，未指定建筑上界。
 
+Elevator 的 `SetRepositionTarget` / `ClearRepositionTarget` / `GetRepositionTarget` / `IsRepositioning` 管理低优先级软目标。只允许无乘客、无真实任务的 Idle 梯接受目标；真实 Hall Call 或 Internal Target 会立即覆盖软目标，但不取消已经开始的楼层间动作。`FleetRebalancer::BuildPlan` 是无副作用的只读计算入口，返回目标层与 expectedBenefit，提交仍由 Simulation 负责。
+
 时间约定：所有模型时间单位为**仿真秒**；`Update` 的入参为**真实经过秒数**，内部乘一次 `simulationSpeed`。UI 不再调用 Update，Worker 使用 `steady_clock` 采样真实时间。Start/Pause/Resume/Reset 每次处理后都重置墙钟基点，暂停时段不会注入下一次 Update。非有限、零或负 deltaTime 被忽略；结束后不能 Start/Resume 重启，需 Reset。
 
 Update 在下一个乘客到达、任意电梯动作完成、当前帧目标时间三者中取最早边界；同时推进全部电梯，再处理事件。到总时长即结束，不延长到全员送达；随机到达在截止前发生，截止时刻完成的动作仍计入。
@@ -158,9 +161,9 @@ Update 在下一个乘客到达、任意电梯动作完成、当前帧目标时�
 | 负责人 | 文件范围 | 本轮状态 / 后续方向 |
 | --- | --- | --- |
 | A | Core/Passenger.*、Core/Floor.* | 已补齐状态转换、FIFO 与 ID 校验；后续可扩展交通输入方式 |
-| B | Core/Elevator.* | 已实现方向保持、顺路停靠、S/T 计时、容量及上下客 |
+| B | Core/Elevator.* | 已实现方向保持、顺路停靠、S/T 计时、容量、上下客及可抢占软再定位目标 |
 | C | Core/Dispatcher.* | 统一 Cost/ETA 与 LOOK 预演；有限联合分配、滞回改派决策、稳定 tie-break |
-| D | Core/Simulation.* | 已集成种子、Poisson 到达、手工注入、唯一外呼归属、事件推进和清理 |
+| D | Core/Simulation.*、Core/FleetRebalancer.* | 已集成种子、Poisson 到达、唯一外呼归属、事件推进和预测式贪心覆盖再平衡 |
 | E | ElevatorSimulationDlg.* 与必要资源 | 已完成初步参数输入、运行控制、倍速、Timer 与 Snapshot 动态列表；正式动画和视觉优化后续再做 |
 | F | Statistics/*、Tests/* | 已接入事件统计、回归及压力测试；后续扩展算法对照场景和展示 |
 

@@ -108,6 +108,9 @@
     <ClInclude Include="Core\FixedThreadPool.h">
       <Filter>Core</Filter>
     </ClInclude>
+    <ClInclude Include="Core\FleetRebalancer.h">
+      <Filter>Core</Filter>
+    </ClInclude>
     <ClInclude Include="Core\Simulation.h">
       <Filter>Core</Filter>
     </ClInclude>
@@ -133,6 +136,9 @@
       <Filter>Core</Filter>
     </ClCompile>
     <ClCompile Include="Core\FixedThreadPool.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="Core\FleetRebalancer.cpp">
       <Filter>Core</Filter>
     </ClCompile>
     <ClCompile Include="Core\Simulation.cpp">
@@ -162,6 +168,9 @@
       <Filter>Development</Filter>
     </None>
     <None Include="..\Tests\DispatcherTests.cpp">
+      <Filter>Development</Filter>
+    </None>
+    <None Include="..\Tests\FleetRebalancerTests.cpp">
       <Filter>Development</Filter>
     </None>
     <None Include="..\Tests\ElevatorTests.cpp">

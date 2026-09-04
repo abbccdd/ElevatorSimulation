@@ -37,7 +37,8 @@ namespace
                 leftCars[index].currentFloor == rightCars[index].currentFloor &&
                 leftCars[index].direction == rightCars[index].direction &&
                 leftCars[index].state == rightCars[index].state &&
-                leftCars[index].passengerCount == rightCars[index].passengerCount,
+                leftCars[index].passengerCount == rightCars[index].passengerCount &&
+                leftCars[index].repositionTargetFloor == rightCars[index].repositionTargetFloor,
                 "same elevator state");
 
         auto leftPassengers = sequential.GetPassengerSnapshots();

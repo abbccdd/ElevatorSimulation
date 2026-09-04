@@ -55,6 +55,7 @@ cl /nologo /std:c++17 /EHsc /W4 /WX /utf-8 /MD /O2 /I"%DEMO_ROOT%\ElevatorSimula
     "%DEMO_ROOT%\ElevatorSimulation\Core\EventScheduler.cpp" ^
     "%DEMO_ROOT%\ElevatorSimulation\Core\Dispatcher.cpp" ^
     "%DEMO_ROOT%\ElevatorSimulation\Core\FixedThreadPool.cpp" ^
+    "%DEMO_ROOT%\ElevatorSimulation\Core\FleetRebalancer.cpp" ^
     "%DEMO_ROOT%\ElevatorSimulation\Core\Simulation.cpp" ^
     "%DEMO_ROOT%\ElevatorSimulation\Statistics\Statistics.cpp" ^
     /Fe:AlgorithmDemo.exe >compile.log 2>&1

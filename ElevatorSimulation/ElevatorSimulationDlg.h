@@ -87,6 +87,7 @@ private:
 	HallCallDashboardList m_hallCallList;
 	CComboBox m_trafficScenarioCombo;
 	CComboBox m_trafficPatternCombo;
+	CButton m_predictiveRebalancingCheck;
 	CFont m_titleFont;
 	CFont m_sectionFont;
 	CFont m_statValueFont;

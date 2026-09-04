@@ -4,6 +4,7 @@
 #include "Dispatcher.h"
 #include "Elevator.h"
 #include "EventScheduler.h"
+#include "FleetRebalancer.h"
 #include "Floor.h"
 #include "Passenger.h"
 #include "../Statistics/Statistics.h"
@@ -65,6 +66,7 @@ private:
     std::vector<Elevator> m_elevators;
     std::unordered_map<PassengerId, Passenger> m_passengers;
     ElevatorDispatcher m_dispatcher;
+    FleetRebalancer m_fleetRebalancer;
     Statistics m_statistics;
     struct HallCall
     {
@@ -88,6 +90,8 @@ private:
     double m_currentPhaseEnd = 0.0;
     bool m_dispatchDirty = true; // 仅模型事件置脏，帧边界不触发重评估。
     double m_lastReassessmentTime = UnsetTime;
+    bool m_rebalanceDirty = true;
+    double m_lastFleetRebalanceTime = UnsetTime;
 
     void GeneratePassengerArrival();
     void HandleTrafficPhaseChange();
@@ -97,6 +101,7 @@ private:
     std::vector<ElevatorDispatchSnapshot> BuildDispatchSnapshots() const;
     HallCallDispatchSnapshot BuildHallCallSnapshot(const HallCallKey& key, const HallCall& call) const;
     bool DispatchCalls();
+    void RebalanceIdleFleet();
     void StabilizeCurrentTime();
     void ReleaseHallCall(int floor, Direction direction, int elevatorId);
     void HandleElevatorEvent(int elevatorId, const ElevatorEvent& event);
