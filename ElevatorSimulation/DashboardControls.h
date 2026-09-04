@@ -4,9 +4,9 @@
 
 #include <afxcmn.h>
 #include <afxwin.h>
+#include <cstddef>
+#include <cwchar>
 
-// 底部 KPI 的双语标题。保留原有动态创建/布局方式，只负责绘制，
-// 避免窄卡片下英文 Static 文本被裁剪或出现异常显示。
 class DashboardStatTitle : public CStatic
 {
 protected:
@@ -20,10 +20,7 @@ protected:
         GetClientRect(&client);
         dc.FillSolidRect(client, ::GetSysColor(COLOR_3DFACE));
         dc.SetBkMode(TRANSPARENT);
-
-        CFont* font = GetFont();
-        CFont* oldFont = font != nullptr ? dc.SelectObject(font) : nullptr;
-        dc.SetTextColor(RGB(45, 52, 62));
+        if (GetFont() != nullptr) dc.SelectObject(GetFont());
 
         static const wchar_t* Chinese[] = {
             L"总生成", L"等待中", L"乘梯中", L"已到达", L"平均等待", L"最大等待"
@@ -35,26 +32,23 @@ protected:
         const int index = GetDlgCtrlID() - IDC_STAT_TITLE_FIRST;
         if (index >= 0 && index < 6)
         {
+            const int split = static_cast<int>(client.top) + client.Height() / 2;
             CRect top = client;
             CRect bottom = client;
-            const int split = static_cast<int>(client.top) + client.Height() / 2;
             top.bottom = split + 1;
             bottom.top = split - 1;
 
+            dc.SetTextColor(RGB(45, 52, 62));
             dc.DrawTextW(Chinese[index], top,
                 DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
             dc.SetTextColor(RGB(105, 112, 122));
             dc.DrawTextW(English[index], bottom,
                 DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         }
-
-        if (oldFont != nullptr) dc.SelectObject(oldFont);
         return 0;
     }
 };
 
-// Hall Call 列表在请求较少时会留下大面积空白。
-// 这个控件直接利用列表空白区域绘制只读群控摘要；当请求较多、空间不足时自动隐藏。
 class HallCallDashboardList : public CListCtrl
 {
 protected:
@@ -110,11 +104,8 @@ private:
         dc.FillSolidRect(card, RGB(248, 250, 252));
         CPen borderPen(PS_SOLID, 1, RGB(210, 216, 224));
         CPen* oldPen = dc.SelectObject(&borderPen);
-        CBrush* oldBrush = static_cast<CBrush*>(dc.SelectStockObject(NULL_BRUSH));
         dc.Rectangle(card);
-        if (oldBrush != nullptr) dc.SelectObject(oldBrush);
         dc.SelectObject(oldPen);
-
         dc.SetBkMode(TRANSPARENT);
         if (GetFont() != nullptr) dc.SelectObject(GetFont());
 
@@ -181,30 +172,13 @@ private:
     }
 };
 
-// 右侧页签有时会被 GroupBox 的重绘次序压到后面，主动维持在同级窗口顶部。
+// 保持 CTabCtrl 的标准行为；详情面板内部另提供明确的返回按钮。
 class DashboardRightTabs : public CTabCtrl
 {
-protected:
-    LRESULT WindowProc(UINT message, WPARAM wParam, LPARAM lParam) override
-    {
-        const LRESULT result = CTabCtrl::WindowProc(message, wParam, lParam);
-        if ((message == WM_SHOWWINDOW && wParam != FALSE) || message == WM_WINDOWPOSCHANGED)
-        {
-            if (GetSafeHwnd() != nullptr && IsWindowVisible())
-                SetWindowPos(&wndTop, 0, 0, 0, 0,
-                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-        }
-        return result;
-    }
 };
 
-// 选中电梯后的完整详情面板。复用 Dialog 原有 SetWindowText 数据，
-// 不访问 Simulation 可写状态；同时提供明确的“返回 Hall Call”导航。
 class ElevatorDetailDashboard : public CStatic
 {
-public:
-    ElevatorDetailDashboard() = default;
-
 protected:
     LRESULT WindowProc(UINT message, WPARAM wParam, LPARAM lParam) override
     {
@@ -224,7 +198,9 @@ protected:
         }
         else if (message == WM_LBUTTONUP)
         {
-            const CPoint point(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+            const int x = static_cast<short>(LOWORD(lParam));
+            const int y = static_cast<short>(HIWORD(lParam));
+            const CPoint point(x, y);
             if (m_backRect.PtInRect(point))
             {
                 ReturnToHallCalls();
@@ -263,7 +239,7 @@ private:
     {
         const int labelPosition = source.Find(label);
         if (labelPosition < 0) return L"--";
-        const int start = labelPosition + static_cast<int>(wcslen(label));
+        const int start = labelPosition + static_cast<int>(std::wcslen(label));
         int end = source.Find(L"\r\n", start);
         if (end < 0) end = source.GetLength();
         CString value = source.Mid(start, end - start);
@@ -287,22 +263,24 @@ private:
         const CString state = ExtractField(source, L"状态：");
         const CString load = ExtractField(source, L"载客：");
 
-        m_backRect.SetRect(static_cast<int>(client.left) + 4, static_cast<int>(client.top) + 4,
-            static_cast<int>(client.right) - 4, static_cast<int>(client.top) + 38);
+        m_backRect.SetRect(static_cast<int>(client.left) + 4,
+            static_cast<int>(client.top) + 4,
+            static_cast<int>(client.right) - 4,
+            static_cast<int>(client.top) + 38);
         dc.FillSolidRect(m_backRect, RGB(245, 248, 252));
         CPen buttonPen(PS_SOLID, 1, RGB(194, 204, 218));
         CPen* oldPen = dc.SelectObject(&buttonPen);
-        CBrush* oldBrush = static_cast<CBrush*>(dc.SelectStockObject(NULL_BRUSH));
         dc.Rectangle(m_backRect);
-        if (oldBrush != nullptr) dc.SelectObject(oldBrush);
         dc.SelectObject(oldPen);
         dc.SetTextColor(RGB(48, 89, 145));
         dc.DrawTextW(L"←  返回 Hall Call / 外呼列表", m_backRect,
             DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
         CRect sectionTitle;
-        sectionTitle.SetRect(static_cast<int>(client.left) + 4, static_cast<int>(m_backRect.bottom) + 15,
-            static_cast<int>(client.right) - 4, static_cast<int>(m_backRect.bottom) + 40);
+        sectionTitle.SetRect(static_cast<int>(client.left) + 4,
+            static_cast<int>(m_backRect.bottom) + 15,
+            static_cast<int>(client.right) - 4,
+            static_cast<int>(m_backRect.bottom) + 40);
         dc.SetTextColor(RGB(35, 42, 52));
         dc.DrawTextW(L"实时状态 / Live Status", sectionTitle,
             DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
@@ -315,26 +293,18 @@ private:
         const int firstTop = static_cast<int>(sectionTitle.bottom) + 6;
         const int cellHeight = 64;
 
-        DrawMetric(dc, CRect(left, firstTop, left + cellWidth, firstTop + cellHeight),
-            L"当前楼层", floor);
-        DrawMetric(dc, CRect(left + cellWidth + gap, firstTop, right, firstTop + cellHeight),
-            L"运行方向", direction);
+        DrawMetric(dc, CRect(left, firstTop,
+            left + cellWidth, firstTop + cellHeight), L"当前楼层", floor);
+        DrawMetric(dc, CRect(left + cellWidth + gap, firstTop,
+            right, firstTop + cellHeight), L"运行方向", direction);
         DrawMetric(dc, CRect(left, firstTop + cellHeight + gap,
-            left + cellWidth, firstTop + cellHeight * 2 + gap),
-            L"运行状态", state);
+            left + cellWidth, firstTop + cellHeight * 2 + gap), L"运行状态", state);
         DrawMetric(dc, CRect(left + cellWidth + gap, firstTop + cellHeight + gap,
-            right, firstTop + cellHeight * 2 + gap),
-            L"载客情况", load);
+            right, firstTop + cellHeight * 2 + gap), L"载客情况", load);
 
         int cardTop = firstTop + cellHeight * 2 + gap + 14;
         CRect taskCard(left, cardTop, right, cardTop + 86);
-        dc.FillSolidRect(taskCard, RGB(248, 250, 252));
-        CPen cardPen(PS_SOLID, 1, RGB(216, 222, 230));
-        oldPen = dc.SelectObject(&cardPen);
-        oldBrush = static_cast<CBrush*>(dc.SelectStockObject(NULL_BRUSH));
-        dc.Rectangle(taskCard);
-        if (oldBrush != nullptr) dc.SelectObject(oldBrush);
-        dc.SelectObject(oldPen);
+        DrawCardBorder(dc, taskCard);
         CRect taskText = taskCard;
         taskText.DeflateRect(10, 8, 10, 6);
         CString task;
@@ -353,16 +323,12 @@ private:
 
         cardTop = static_cast<int>(taskCard.bottom) + 10;
         CRect groupCard(left, cardTop, right, cardTop + 104);
-        dc.FillSolidRect(groupCard, RGB(248, 250, 252));
-        oldPen = dc.SelectObject(&cardPen);
-        oldBrush = static_cast<CBrush*>(dc.SelectStockObject(NULL_BRUSH));
-        dc.Rectangle(groupCard);
-        if (oldBrush != nullptr) dc.SelectObject(oldBrush);
-        dc.SelectObject(oldPen);
+        DrawCardBorder(dc, groupCard);
         CRect groupText = groupCard;
         groupText.DeflateRect(10, 8, 10, 6);
         dc.SetTextColor(RGB(55, 64, 75));
-        dc.DrawTextW(L"群控参与\r\n该电梯作为候选参与事件级 ETA / Cost 评分。实际外呼归属还会受到联合调度、动态改派与滞回策略影响。",
+        dc.DrawTextW(
+            L"群控参与\r\n该电梯作为候选参与事件级 ETA / Cost 评分。实际外呼归属还会受到联合调度、动态改派与滞回策略影响。",
             groupText, DT_LEFT | DT_TOP | DT_WORDBREAK | DT_NOPREFIX);
 
         CString traffic = L"--";
@@ -384,15 +350,22 @@ private:
             DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     }
 
+    static void DrawCardBorder(CDC& dc, const CRect& bounds)
+    {
+        dc.FillSolidRect(bounds, RGB(248, 250, 252));
+        CPen pen(PS_SOLID, 1, RGB(216, 222, 230));
+        CPen* oldPen = dc.SelectObject(&pen);
+        dc.Rectangle(bounds);
+        dc.SelectObject(oldPen);
+    }
+
     static void DrawMetric(CDC& dc, const CRect& bounds,
         const wchar_t* label, const CString& value)
     {
         dc.FillSolidRect(bounds, RGB(250, 251, 253));
         CPen pen(PS_SOLID, 1, RGB(218, 224, 232));
         CPen* oldPen = dc.SelectObject(&pen);
-        CBrush* oldBrush = static_cast<CBrush*>(dc.SelectStockObject(NULL_BRUSH));
         dc.Rectangle(bounds);
-        if (oldBrush != nullptr) dc.SelectObject(oldBrush);
         dc.SelectObject(oldPen);
 
         CRect labelRect = bounds;
@@ -415,6 +388,7 @@ private:
         if (parent == nullptr) return;
         CWnd* tabsWindow = parent->GetDlgItem(IDC_TAB_RIGHT);
         if (tabsWindow == nullptr) return;
+
         CTabCtrl* tabs = static_cast<CTabCtrl*>(tabsWindow);
         tabs->SetCurSel(0);
 
