@@ -40,6 +40,15 @@ namespace
         return found->probability;
     }
 
+    const FloorCoverageSnapshot& CoverageAt(
+        const std::vector<FloorCoverageSnapshot>& coverage, int floor)
+    {
+        const auto found = std::find_if(coverage.begin(), coverage.end(),
+            [floor](const FloorCoverageSnapshot& item) { return item.floor == floor; });
+        if (found == coverage.end()) throw std::runtime_error("floor coverage missing");
+        return *found;
+    }
+
     std::vector<int> FinalFloors(const std::vector<ElevatorDispatchSnapshot>& cars,
         const RebalancePlan& plan)
     {
@@ -159,6 +168,103 @@ int main()
             "DownPeak emphasizes upper origins");
         tests.Check(WeightAt(inter, 10, Direction::Up) > WeightAt(up, 10, Direction::Up),
             "InterFloor emphasizes interior origins");
+    });
+
+    tests.Run("Coverage uses Dispatcher ScoreSnapshot for every floor", [&]
+    {
+        const auto config = Config(10);
+        const std::vector<ElevatorDispatchSnapshot> cars{
+            IdleCar(0, 2, config), IdleCar(1, 9, config) };
+        ElevatorDispatcher dispatcher;
+        const auto coverage = FleetRebalancer::BuildCoverageSnapshots(cars, 10,
+            TrafficPattern::UpPeak, 7.0, dispatcher);
+        tests.Check(coverage.size() == 10, "coverage contains every floor");
+        double expected = std::numeric_limits<double>::infinity();
+        for (const auto& car : cars)
+        {
+            const auto score = dispatcher.ScoreSnapshot(1, Direction::Up, car, 7.0, 7.0);
+            if (score.feasible) expected = (std::min)(expected, score.eta);
+        }
+        const auto& lobby = CoverageAt(coverage, 1);
+        tests.Near(lobby.coverageEta, expected,
+            "floor coverage is minimum feasible Dispatcher ETA");
+        double interiorDemand = 0.0;
+        double interiorWeightedEta = 0.0;
+        for (const auto& weight : FleetRebalancer::BuildDemandWeights(10,
+            TrafficPattern::UpPeak))
+        {
+            if (weight.floor != 5 || weight.probability == 0.0) continue;
+            double bestEta = std::numeric_limits<double>::infinity();
+            for (const auto& car : cars)
+            {
+                const auto score = dispatcher.ScoreSnapshot(5, weight.direction,
+                    car, 7.0, 7.0);
+                if (score.feasible) bestEta = (std::min)(bestEta, score.eta);
+            }
+            interiorDemand += weight.probability;
+            interiorWeightedEta += weight.probability * bestEta;
+        }
+        const auto& interior = CoverageAt(coverage, 5);
+        tests.Near(interior.demandWeight, interiorDemand,
+            "interior coverage sums Up and Down demand weights");
+        tests.Near(interior.coverageEta, interiorWeightedEta / interiorDemand,
+            "interior coverage weights both Dispatcher ETAs");
+        for (int floor = 1; floor <= 10; ++floor)
+            tests.Check(coverage[static_cast<std::size_t>(floor - 1)].floor == floor,
+                "coverage preserves one-based floor order");
+    });
+
+    tests.Run("Busy and repositioning elevators participate in Coverage", [&]
+    {
+        const auto config = Config();
+        ElevatorDispatcher dispatcher;
+        const auto emptyCoverage = FleetRebalancer::BuildCoverageSnapshots({}, 20,
+            TrafficPattern::UpPeak, 0.0, dispatcher);
+        tests.Check(!std::isfinite(CoverageAt(emptyCoverage, 1).coverageEta),
+            "no fleet has no feasible coverage");
+
+        Elevator busy(0, 5, config);
+        tests.Check(busy.AddInternalTarget(18), "create committed busy LOOK route");
+        busy.Advance(0.5);
+        const auto busySnapshot = busy.GetDispatchSnapshot();
+        const auto busyScore = dispatcher.ScoreSnapshot(1, Direction::Up,
+            busySnapshot, 0.0, 0.0);
+        tests.Check(busyScore.feasible, "busy car is feasible for coverage fixture");
+        const auto busyCoverage = FleetRebalancer::BuildCoverageSnapshots({ busySnapshot },
+            20, TrafficPattern::UpPeak, 0.0, dispatcher);
+        tests.Near(CoverageAt(busyCoverage, 1).coverageEta, busyScore.eta,
+            "busy elevator contributes its Dispatcher ETA");
+
+        Elevator repositioning(1, 5, config);
+        tests.Check(repositioning.SetRepositionTarget(10), "create soft reposition route");
+        repositioning.Advance(0.5);
+        const auto repositionSnapshot = repositioning.GetDispatchSnapshot();
+        const auto repositionScore = dispatcher.ScoreSnapshot(1, Direction::Up,
+            repositionSnapshot, 0.0, 0.0);
+        tests.Check(repositionScore.feasible, "repositioning car is feasible for coverage fixture");
+        const auto repositionCoverage = FleetRebalancer::BuildCoverageSnapshots(
+            { repositionSnapshot }, 20, TrafficPattern::UpPeak, 0.0, dispatcher);
+        tests.Near(CoverageAt(repositionCoverage, 1).coverageEta, repositionScore.eta,
+            "repositioning elevator contributes its Dispatcher ETA");
+        tests.Check(CoverageAt(repositionCoverage, 10).hasRepositionTarget,
+            "soft target floor is marked in coverage");
+    });
+
+    tests.Run("Coverage demand reflects peak traffic patterns", [&]
+    {
+        const auto config = Config();
+        const auto cars = IdleFleet(1, 10, config);
+        ElevatorDispatcher dispatcher;
+        const auto up = FleetRebalancer::BuildCoverageSnapshots(cars, 20,
+            TrafficPattern::UpPeak, 0.0, dispatcher);
+        const auto down = FleetRebalancer::BuildCoverageSnapshots(cars, 20,
+            TrafficPattern::DownPeak, 0.0, dispatcher);
+        tests.Check(CoverageAt(up, 1).demandWeight >
+            10.0 * CoverageAt(up, 2).demandWeight,
+            "UpPeak makes first-floor demand clearly dominant");
+        tests.Check(CoverageAt(down, 20).demandWeight >
+            3.0 * CoverageAt(up, 20).demandWeight,
+            "DownPeak clearly increases high-floor down demand");
     });
 
     tests.Run("Greedy marginal coverage disperses idle cars", [&]
@@ -285,6 +391,14 @@ int main()
         tests.Check(!plan.assignments.empty(), "large fleet produces a plan");
         std::cout << "Fleet rebalance benchmark (100 floors, 99 elevators): "
             << elapsed << " ms\n";
+        const auto coverageStart = std::chrono::steady_clock::now();
+        const auto coverage = FleetRebalancer::BuildCoverageSnapshots(cars, 100,
+            TrafficPattern::Uniform, 0.0, dispatcher);
+        const auto coverageElapsed = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - coverageStart).count();
+        tests.Check(coverage.size() == 100, "large fleet coverage contains every floor");
+        std::cout << "Floor coverage benchmark (100 floors, 99 elevators): "
+            << coverageElapsed << " ms\n";
     });
 
     return tests.Finish();

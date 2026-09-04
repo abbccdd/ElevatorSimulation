@@ -365,12 +365,16 @@ void CElevatorSimulationDlg::CreateUIFramework()
 		CRect(), this, IDC_PAGE_PLACEHOLDER);
 	m_statisticsTrendView.Create(this, IDC_STATISTICS_TREND_VIEW);
 	m_statisticsTrendView.SetFont(GetFont());
+	m_floorTrafficHeatmapView.Create(this, IDC_FLOOR_TRAFFIC_HEATMAP_VIEW);
+	m_floorTrafficHeatmapView.SetFont(GetFont());
 	m_algorithmPageSummary.Create(L"请在实时监控页的 Hall Call 列表中选择一个请求",
 		WS_CHILD | WS_BORDER | SS_LEFT | SS_CENTERIMAGE, CRect(), this,
 		IDC_ALGORITHM_PAGE_SUMMARY);
 	m_algorithmCandidateList.Create(WS_CHILD | WS_BORDER | WS_TABSTOP | LVS_REPORT |
 		LVS_SINGLESEL | LVS_SHOWSELALWAYS | LVS_NOSORTHEADER, CRect(), this,
 		IDC_LIST_ALGORITHM_CANDIDATES);
+	m_floorCoverageView.Create(this, IDC_FLOOR_COVERAGE_VIEW);
+	m_floorCoverageView.SetFont(GetFont());
 
 	for (std::size_t index = 0; index < m_statCards.size(); ++index)
 	{
@@ -511,21 +515,29 @@ void CElevatorSimulationDlg::RelayoutUI()
 		const int pageWidth = clientWidth - margin - centerX;
 		if (m_pageTabs.GetCurSel() == 1)
 		{
-			place(m_statisticsTrendView, centerX, contentTop, pageWidth, mainHeight);
+			const int heatmapWidth = pageWidth * 38 / 100;
+			place(m_statisticsTrendView, centerX, contentTop,
+				pageWidth - heatmapWidth - gap, mainHeight);
+			place(m_floorTrafficHeatmapView, centerX + pageWidth - heatmapWidth,
+				contentTop, heatmapWidth, mainHeight);
 		}
 		else
 		{
 			place(m_algorithmPageSummary, centerX, contentTop, pageWidth, 64);
+			const int coverageWidth = pageWidth * 42 / 100;
 			place(m_algorithmCandidateList, centerX, contentTop + 72,
-				pageWidth, mainHeight - 72);
+				pageWidth - coverageWidth - gap, mainHeight - 72);
+			place(m_floorCoverageView, centerX + pageWidth - coverageWidth,
+				contentTop + 72, coverageWidth, mainHeight - 72);
 			if (m_algorithmCandidateList.GetHeaderCtrl() != nullptr)
 			{
-				m_algorithmCandidateList.SetColumnWidth(0, toDevice(pageWidth * 10 / 100));
-				m_algorithmCandidateList.SetColumnWidth(1, toDevice(pageWidth * 12 / 100));
-				m_algorithmCandidateList.SetColumnWidth(2, toDevice(pageWidth * 12 / 100));
-				m_algorithmCandidateList.SetColumnWidth(3, toDevice(pageWidth * 12 / 100));
-				m_algorithmCandidateList.SetColumnWidth(4, toDevice(pageWidth * 14 / 100));
-				m_algorithmCandidateList.SetColumnWidth(5, toDevice(pageWidth * 36 / 100));
+				const int listWidth = pageWidth - coverageWidth - gap;
+				m_algorithmCandidateList.SetColumnWidth(0, toDevice(listWidth * 13 / 100));
+				m_algorithmCandidateList.SetColumnWidth(1, toDevice(listWidth * 15 / 100));
+				m_algorithmCandidateList.SetColumnWidth(2, toDevice(listWidth * 15 / 100));
+				m_algorithmCandidateList.SetColumnWidth(3, toDevice(listWidth * 15 / 100));
+				m_algorithmCandidateList.SetColumnWidth(4, toDevice(listWidth * 17 / 100));
+				m_algorithmCandidateList.SetColumnWidth(5, toDevice(listWidth * 22 / 100));
 			}
 		}
 	}
@@ -566,8 +578,10 @@ void CElevatorSimulationDlg::UpdateTabPageVisibility()
 	UpdateRightPanelVisibility();
 	m_pagePlaceholder.ShowWindow(SW_HIDE);
 	m_statisticsTrendView.ShowWindow(page == 1 ? SW_SHOW : SW_HIDE);
+	m_floorTrafficHeatmapView.ShowWindow(page == 1 ? SW_SHOW : SW_HIDE);
 	m_algorithmPageSummary.ShowWindow(page == 2 ? SW_SHOW : SW_HIDE);
 	m_algorithmCandidateList.ShowWindow(page == 2 ? SW_SHOW : SW_HIDE);
+	m_floorCoverageView.ShowWindow(page == 2 ? SW_SHOW : SW_HIDE);
 	RelayoutUI();
 }
 
@@ -1140,6 +1154,8 @@ void CElevatorSimulationDlg::RefreshSimulationView(bool forceBuildingRefresh)
 	RefreshBuildingView(snapshot, forceBuildingRefresh);
 	UpdateElevatorDetails(snapshot);
 	UpdateStatisticsTrend(snapshot);
+	m_floorTrafficHeatmapView.SetStatistics(statistics.floorTraffic);
+	m_floorCoverageView.SetCoverage(snapshot->floorCoverage);
 	ValidateObservedHallCall(snapshot);
 	RefreshObservationViews();
 

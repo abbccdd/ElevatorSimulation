@@ -49,7 +49,14 @@ namespace
         floors[0].upWaitingCount = 999;
         auto statistics = simulation.GetStatisticsSnapshot();
         Check(statistics.elevators.size() == elevators.size(), "per-elevator statistics slots");
+        Check(statistics.floorTraffic.size() == floors.size(), "per-floor statistics slots");
         Check(statistics.totalPassengerCount == 0 && statistics.arrivedCount == 0, "empty statistics");
+        for (int floor = 1; floor <= floorCount; ++floor)
+        {
+            const auto& traffic = statistics.floorTraffic[static_cast<std::size_t>(floor - 1)];
+            Check(traffic.floor == floor && traffic.generatedCount == 0 &&
+                traffic.boardedCount == 0, "initial floor statistics");
+        }
         statistics.elevators[0].transportedCount = 999;
         auto copiedConfig = simulation.GetConfig();
         copiedConfig.capacity = 999;

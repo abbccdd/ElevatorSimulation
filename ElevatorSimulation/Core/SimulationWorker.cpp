@@ -13,6 +13,7 @@ namespace
 {
     constexpr auto UpdateInterval = std::chrono::milliseconds(16);
     constexpr auto ObservationInterval = std::chrono::milliseconds(200);
+    constexpr auto CoverageInterval = std::chrono::milliseconds(250);
 }
 
 SimulationWorker::SimulationWorker(const SimulationConfig& config,
@@ -192,8 +193,20 @@ void SimulationWorker::ThreadMain()
 
 void SimulationWorker::PublishSnapshot(const Simulation& simulation, bool workerActive)
 {
+    auto value = simulation.GetUISnapshot(workerActive, false);
+    const auto now = std::chrono::steady_clock::now();
+    const bool reset = m_lastCoverageSimulationTime != UnsetTime &&
+        simulation.GetCurrentTime() < m_lastCoverageSimulationTime;
+    if (!m_hasCoverage || reset || now >= m_nextCoverageRefresh)
+    {
+        m_cachedFloorCoverage = simulation.GetFloorCoverageSnapshots();
+        m_lastCoverageSimulationTime = simulation.GetCurrentTime();
+        m_nextCoverageRefresh = now + CoverageInterval;
+        m_hasCoverage = true;
+    }
+    value.floorCoverage = m_cachedFloorCoverage;
     std::shared_ptr<const SimulationUISnapshot> snapshot =
-        std::make_shared<SimulationUISnapshot>(simulation.GetUISnapshot(workerActive));
+        std::make_shared<SimulationUISnapshot>(std::move(value));
     std::atomic_store_explicit(&m_latestSnapshot, std::move(snapshot), std::memory_order_release);
 }
 

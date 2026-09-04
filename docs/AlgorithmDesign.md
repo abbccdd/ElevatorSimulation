@@ -163,6 +163,8 @@ MFC 主线程不再持有或直接调用 Simulation。`SimulationWorker` 的独�
 
 每次命令或推进后，Worker 在自身线程调用 `GetUISnapshot()`，按值复制 UI 实际使用的电梯、楼层、Hall Call 和统计视图，再通过 C++17 `atomic_store(shared_ptr<const SimulationUISnapshot>)` 发布。高频 UI 快照不复制 Passenger 明细；测试和后续按需功能继续使用独立 `GetPassengerSnapshots()`。MFC 33 ms Timer 只 `atomic_load` 最近快照并更新控件，既不调用 Update，也不扫描或修改 Simulation。共享可写区域仅有短命令队列和最新 shared_ptr，没有给核心各容器增加 mutex。
 
+Coverage 也在 Worker 线程中由真实 `ElevatorDispatchSnapshot` 只读计算。为避免 100 层×99 梯时对每个 16 ms 推进都做全量 LOOK 预演，Worker 最多每 250 ms 重算一次并把结果随高频 UI Snapshot 发布；每次重算均使用该时刻的完整快照，不缓存或修改调度状态。
+
 UI 只传真实秒；唯一乘倍速的位置是 `Simulation::Update`。本轮最大仿真增量先截断到总时长。消耗时间的事件由 `EventScheduler` 的 `priority_queue` 最小堆管理：PassengerArrival、OfficeDay 的 TrafficPhaseChange、SimulationEnd，以及每台 Moving/Boarding/Alighting 电梯唯一的 ElevatorAction。每梯另存绝对动作完成时刻；Update 直接跳到堆顶时间，只对事件所属电梯调用 `Advance`，不再扫描所有电梯的下一动作或推进未到期电梯。事件间隔内电梯状态不变，`AdvanceClockTo` 仍遍历全部电梯累计该段状态统计。
 
 事件全序依次比较绝对时间、类型（ElevatorAction、TrafficPhaseChange、PassengerArrival、SimulationEnd）、ElevatorAction 的电梯 ID，最终用单调 sequence 消除完全相同键的偶然顺序。同一时刻先按 ID 完成全部电梯动作，再切换客流阶段、产生到达乘客，最后只调用一次 `StabilizeCurrentTime`，并为新进入计时状态的电梯补入后续事件。每次停站先下后上；开始 Boarding/Alighting 只是登记计时，完成必须等待后续事件。零耗时决策循环不会消耗 S/T，并设有依任务数计算的收敛保护，错误不会被静默忽略。
@@ -197,6 +199,8 @@ UpPeak 使用 `0.75 × PeakUp + 0.25 × Uniform`，且只有 `PeakUp(1,Up)=1`。
 
 预测窗为 `H=max(15, 0.5×(L-1)×S)`。对每个未来外呼，忙碌梯使用 `ElevatorDispatcher::ScoreSnapshot(f,d,snapshot,currentTime,currentTime)` 计算 ETA；请求时间等于当前时间使 Aging 为零。由此当前方向、当前楼层间剩余时间、上下客、容量、内部目标、双向外呼和 LOOK 折返全部复用正式 Dispatcher 语义。覆盖值为 `C(f,d)=min(H,best ETA)`；没有可行忙碌梯时为 `H`。
 
+可视化的 `FloorCoverageSnapshot` 与再平衡目标函数共用需求权重和同一 `ScoreSnapshot`，但它表示当前全梯群而非“仅忙碌梯基线”。对每个有权重方向取全部电梯的原始最小 feasible ETA（不做 `H` 截断），再按楼层计算 `[Σ_d w(f,d)C(f,d)]/[Σ_d w(f,d)]`。运行、载客、执行 Hall Call 和 soft reposition 的电梯都以快照真实状态参与；无可行梯保留 infinity 供 UI 显示“不可达”。
+
 空闲梯在候选层 `x` 的能力由无乘客、无任务、无预留的虚拟 Idle `ElevatorDispatchSnapshot` 再次调用同一个 `ScoreSnapshot` 得到 `V(x,f,d)`，不另写距离 ETA。实现预计算 busy coverage 和所有 `VirtualETA[x][f][d]`。
 
 令 `M=λH`，当前覆盖的响应暴露为 `R(C)=M×Σw(f,d)C(f,d)`。候选驻点的边际收益为 `CoverageGain(x)=M×Σw(f,d)[C_before(f,d)-min(C_before(f,d),V(x,f,d))]`。空驶时间 `Tmove(i,x)=|c_i-x|S`，空驶惩罚系数为 0.25，因此 `NetGain(i,x)=CoverageGain(x)-0.25×Tmove(i,x)`。只有净收益严格大于零才移动；零流量自然没有主动再定位。
@@ -225,6 +229,8 @@ Simulation 只在模型事件请求后、`StabilizeCurrentTime()` 的真实调�
 - 最大等待时间只统计已上梯者；尚在等待的队列不能混入该已完成样本均值。
 - `total = waiting + riding + arrived`，`boarded = riding + arrived`。
 - 各梯统计已送达人数、完成的移动层数、其中空载层数、Idle 秒数及实际人数等于 K 的满载秒数。上梯预留席位影响调度，但未完成上梯时不算实际满载时长。
+- 每层 `FloorTrafficStatistics` 只是历史事件累计：乘客创建时增加 generated 和请求方向，完成 Boarding 时增加 boarded、等待总时间和最大值。楼层平均等待为 `boardedCount==0 ? 0 : totalWaitingTime/boardedCount`，Reset 清空所有楼层槽位。
+- Coverage 不写入 Statistics，历史热力图也不参与未来运力预测；两者仅在 `SimulationUISnapshot` 展示层并列。
 
 评价算法必须同时报告送达量、截止积压和等待/乘梯时间；不能只拿已服务样本的低均值证明高客流性能好。
 

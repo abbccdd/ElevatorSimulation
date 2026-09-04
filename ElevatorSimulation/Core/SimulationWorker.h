@@ -3,6 +3,7 @@
 #include "CommonTypes.h"
 
 #include <condition_variable>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -58,6 +59,10 @@ private:
     std::deque<Command> m_commands;
     bool m_stopQueued = false;
     std::thread m_thread;
+    std::vector<FloorCoverageSnapshot> m_cachedFloorCoverage;
+    std::chrono::steady_clock::time_point m_nextCoverageRefresh;
+    double m_lastCoverageSimulationTime = UnsetTime;
+    bool m_hasCoverage = false;
 
     void Enqueue(Command command);
     void ThreadMain();

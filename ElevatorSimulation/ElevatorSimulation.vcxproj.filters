@@ -18,6 +18,9 @@
     <ClInclude Include="ElevatorBuildingView.h">
       <Filter>UI</Filter>
     </ClInclude>
+    <ClInclude Include="FloorAnalyticsViews.h">
+      <Filter>UI</Filter>
+    </ClInclude>
     <ClInclude Include="ElevatorSimulation.h">
       <Filter>头文件</Filter>
     </ClInclude>
@@ -42,6 +45,9 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ElevatorBuildingView.cpp">
+      <Filter>UI</Filter>
+    </ClCompile>
+    <ClCompile Include="FloorAnalyticsViews.cpp">
       <Filter>UI</Filter>
     </ClCompile>
     <ClCompile Include="ElevatorSimulation.cpp">

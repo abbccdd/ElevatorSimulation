@@ -6,11 +6,11 @@
 class Statistics
 {
 public:
-    void Reset(int elevatorCount);
+    void Reset(int elevatorCount, int floorCount);
     StatisticsSnapshot GetSnapshot() const;
 
-    void PassengerCreated();
-    void PassengerBoarded(double waitingTime);
+    void PassengerCreated(int floor, Direction direction);
+    void PassengerBoarded(int floor, double waitingTime);
     void PassengerArrived(int elevatorId, double rideTime);
     void ElevatorMoved(int elevatorId, bool empty);
     void ElevatorTimeElapsed(int elevatorId, double seconds, ElevatorState state, bool full);

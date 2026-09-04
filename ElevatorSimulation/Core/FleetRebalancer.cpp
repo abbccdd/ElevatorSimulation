@@ -72,6 +72,47 @@ std::vector<HallDemandWeight> FleetRebalancer::BuildDemandWeights(
     return weights;
 }
 
+std::vector<FloorCoverageSnapshot> FleetRebalancer::BuildCoverageSnapshots(
+    const std::vector<ElevatorDispatchSnapshot>& elevators,
+    int floorCount,
+    TrafficPattern pattern,
+    double currentTime,
+    const ElevatorDispatcher& dispatcher)
+{
+    const auto weights = BuildDemandWeights(floorCount, pattern);
+    std::vector<FloorCoverageSnapshot> coverage(static_cast<std::size_t>(floorCount));
+    for (int floor = 1; floor <= floorCount; ++floor)
+    {
+        auto& result = coverage[static_cast<std::size_t>(floor - 1)];
+        result.floor = floor;
+        result.hasRepositionTarget = std::any_of(elevators.begin(), elevators.end(),
+            [floor](const ElevatorDispatchSnapshot& elevator)
+            { return elevator.elevator.repositionTargetFloor == floor; });
+
+        double weightedEta = 0.0;
+        bool allFeasible = true;
+        for (const auto& weight : weights)
+        {
+            if (weight.floor != floor || weight.probability == 0.0) continue;
+            double bestEta = std::numeric_limits<double>::infinity();
+            for (const auto& elevator : elevators)
+            {
+                const auto score = dispatcher.ScoreSnapshot(floor, weight.direction,
+                    elevator, currentTime, currentTime);
+                if (score.feasible) bestEta = (std::min)(bestEta, score.eta);
+            }
+            result.demandWeight += weight.probability;
+            if (std::isfinite(bestEta))
+                weightedEta += weight.probability * bestEta;
+            else
+                allFeasible = false;
+        }
+        if (result.demandWeight > 0.0 && allFeasible)
+            result.coverageEta = weightedEta / result.demandWeight;
+    }
+    return coverage;
+}
+
 RebalancePlan FleetRebalancer::BuildPlan(
     const std::vector<ElevatorDispatchSnapshot>& elevators,
     const std::vector<int>& idleElevatorIndices,

@@ -192,6 +192,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="ElevatorBuildingView.h" />
+    <ClInclude Include="FloorAnalyticsViews.h" />
     <ClInclude Include="ElevatorSimulation.h" />
     <ClInclude Include="ElevatorSimulationDlg.h" />
     <ClInclude Include="StatisticsTrendView.h" />
@@ -202,6 +203,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ElevatorBuildingView.cpp" />
+    <ClCompile Include="FloorAnalyticsViews.cpp" />
     <ClCompile Include="ElevatorSimulation.cpp" />
     <ClCompile Include="ElevatorSimulationDlg.cpp" />
     <ClCompile Include="StatisticsTrendView.cpp" />

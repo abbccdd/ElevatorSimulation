@@ -181,7 +181,7 @@ bool Simulation::Initialize(const SimulationConfig& config, std::uint32_t seed)
                 (id < 2 * groupSize ? config.floorCount : middleFloor);
             elevators.emplace_back(id, initialFloor, config);
         }
-        statistics.Reset(config.elevatorCount);
+        statistics.Reset(config.elevatorCount, config.floorCount);
 
         m_floors = std::move(floors);
         m_elevators = std::move(elevators);
@@ -308,7 +308,7 @@ PassengerId Simulation::AddPassenger(int startFloor, int targetFloor)
         throw std::logic_error("Duplicate passenger in floor queue");
     m_hallCalls.try_emplace({ startFloor, direction }, HallCall{ InvalidElevatorId, m_currentTime, id });
     ++m_nextPassengerId;
-    m_statistics.PassengerCreated();
+    m_statistics.PassengerCreated(startFloor, direction);
     m_dispatchDirty = true;
     m_rebalanceDirty = true;
     return id;
@@ -638,7 +638,8 @@ void Simulation::HandleElevatorEvent(int elevatorId, const ElevatorEvent& event)
         if (!floor.RemoveFront(event.passengerId, passenger.GetDirection()) ||
             !passenger.MarkBoarded(elevatorId, m_currentTime))
             throw std::logic_error("Invalid passenger boarding transition");
-        m_statistics.PassengerBoarded(m_currentTime - passenger.GetRequestTime());
+        m_statistics.PassengerBoarded(passenger.GetStartFloor(),
+            m_currentTime - passenger.GetRequestTime());
     }
     else
     {
@@ -756,9 +757,25 @@ bool Simulation::ValidateState() const
         if (owners != (call.assignedElevatorId == InvalidElevatorId ? 0 : 1)) return false;
     }
     const auto stats = m_statistics.GetSnapshot();
+    if (stats.floorTraffic.size() != m_floors.size()) return false;
+    std::uint64_t generatedByFloor = 0;
+    std::uint64_t boardedByFloor = 0;
+    for (std::size_t index = 0; index < stats.floorTraffic.size(); ++index)
+    {
+        const auto& traffic = stats.floorTraffic[index];
+        if (traffic.floor != static_cast<int>(index) + 1 ||
+            traffic.generatedCount != traffic.upRequestCount + traffic.downRequestCount ||
+            traffic.boardedCount > traffic.generatedCount ||
+            !std::isfinite(traffic.totalWaitingTime) || traffic.totalWaitingTime < 0.0 ||
+            !std::isfinite(traffic.maxWaitingTime) || traffic.maxWaitingTime < 0.0)
+            return false;
+        generatedByFloor += traffic.generatedCount;
+        boardedByFloor += traffic.boardedCount;
+    }
     return seen.size() == m_passengers.size() && stats.waitingCount == waiting && stats.ridingCount == riding &&
         stats.totalPassengerCount == waiting + riding + stats.arrivedCount &&
-        stats.boardedCount == riding + stats.arrivedCount;
+        stats.boardedCount == riding + stats.arrivedCount &&
+        generatedByFloor == stats.totalPassengerCount && boardedByFloor == stats.boardedCount;
 }
 
 std::vector<ElevatorSnapshot> Simulation::GetElevatorSnapshots() const
@@ -779,12 +796,19 @@ std::vector<FloorSnapshot> Simulation::GetFloorSnapshots() const
     return snapshots;
 }
 
+std::vector<FloorCoverageSnapshot> Simulation::GetFloorCoverageSnapshots() const
+{
+    if (m_state == SimulationState::Uninitialized) return {};
+    return FleetRebalancer::BuildCoverageSnapshots(BuildDispatchSnapshots(),
+        m_config.floorCount, m_activeTrafficPattern, m_currentTime, m_dispatcher);
+}
+
 StatisticsSnapshot Simulation::GetStatisticsSnapshot() const
 {
     return m_statistics.GetSnapshot();
 }
 
-SimulationUISnapshot Simulation::GetUISnapshot(bool workerActive) const
+SimulationUISnapshot Simulation::GetUISnapshot(bool workerActive, bool includeFloorCoverage) const
 {
     SimulationUISnapshot snapshot;
     snapshot.state = m_state;
@@ -802,5 +826,7 @@ SimulationUISnapshot Simulation::GetUISnapshot(bool workerActive) const
     snapshot.floors = GetFloorSnapshots();
     snapshot.statistics = GetStatisticsSnapshot();
     snapshot.hallCalls = GetHallCallSnapshots();
+    if (includeFloorCoverage)
+        snapshot.floorCoverage = GetFloorCoverageSnapshots();
     return snapshot;
 }

@@ -196,6 +196,20 @@ namespace
             "same complete boarded count");
         tests.Near(leftStats.maxWaitingTime, rightStats.maxWaitingTime,
             "same complete max wait", 1e-6);
+        tests.Check(leftStats.floorTraffic.size() == rightStats.floorTraffic.size(),
+            "same complete floor statistics count");
+        for (std::size_t index = 0; index < leftStats.floorTraffic.size(); ++index)
+        {
+            const auto& a = leftStats.floorTraffic[index];
+            const auto& b = rightStats.floorTraffic[index];
+            tests.Check(a.floor == b.floor && a.generatedCount == b.generatedCount &&
+                a.upRequestCount == b.upRequestCount &&
+                a.downRequestCount == b.downRequestCount &&
+                a.boardedCount == b.boardedCount &&
+                a.totalWaitingTime == b.totalWaitingTime &&
+                a.maxWaitingTime == b.maxWaitingTime,
+                "same complete per-floor traffic statistics");
+        }
         tests.Check(leftStats.elevators.size() == rightStats.elevators.size(),
             "same complete elevator statistics count");
         for (std::size_t index = 0; index < leftStats.elevators.size(); ++index)
@@ -221,6 +235,36 @@ namespace
 int main()
 {
     TestSuite tests("Simulation");
+    tests.Run("floor traffic statistics accumulate and reset", [&] {
+        Statistics statistics;
+        statistics.Reset(3,4);
+        statistics.PassengerCreated(1,Direction::Up);
+        statistics.PassengerCreated(1,Direction::Up);
+        statistics.PassengerCreated(3,Direction::Down);
+        statistics.PassengerBoarded(1,2.0);
+        statistics.PassengerBoarded(1,6.0);
+        auto snapshot=statistics.GetSnapshot();
+        tests.Check(snapshot.floorTraffic.size()==4,"one traffic slot per floor");
+        const auto& first=snapshot.floorTraffic[0];
+        const auto& third=snapshot.floorTraffic[2];
+        tests.Check(first.floor==1 && first.generatedCount==2 &&
+            first.upRequestCount==2 && first.downRequestCount==0,
+            "first-floor generated and up counts");
+        tests.Check(third.floor==3 && third.generatedCount==1 &&
+            third.upRequestCount==0 && third.downRequestCount==1,
+            "third-floor generated and down counts");
+        tests.Check(first.boardedCount==2,"per-floor boarded count");
+        tests.Near(first.totalWaitingTime/first.boardedCount,4.0,
+            "per-floor average wait");
+        tests.Near(first.maxWaitingTime,6.0,"per-floor maximum wait");
+        statistics.Reset(3,4);
+        snapshot=statistics.GetSnapshot();
+        for(const auto& floor:snapshot.floorTraffic)
+            tests.Check(floor.generatedCount==0 && floor.upRequestCount==0 &&
+                floor.downRequestCount==0 && floor.boardedCount==0 &&
+                floor.totalWaitingTime==0.0 && floor.maxWaitingTime==0.0,
+                "reset clears floor traffic");
+    });
     tests.Run("event calendar has deterministic total ordering", [&] {
         EventScheduler scheduler;
         scheduler.Push(5.0,SimulationEventType::PassengerArrival);
@@ -1051,6 +1095,50 @@ int main()
             "missing hall call observation is invalid");
         tests.Check(!sequential.GetDispatchObservation(5,Direction::Idle).valid,
             "invalid direction observation is invalid");
+    });
+    tests.Run("predictive switch preserves floor statistics accounting", [&] {
+        auto config=Config(); config.floorCount=12; config.elevatorCount=6; config.capacity=4;
+        config.moveTimePerFloor=1.0; config.personTime=0.5;
+        config.passengerRate=0.8; config.simulationDuration=80;
+        Simulation disabled,enabled;
+        tests.Check(disabled.Initialize(config,24680),"initialize disabled accounting run");
+        config.predictiveRebalancing=true;
+        tests.Check(enabled.Initialize(config,24680),"initialize enabled accounting run");
+        disabled.Start(); enabled.Start(); disabled.Update(60); enabled.Update(60);
+        const auto left=disabled.GetStatisticsSnapshot();
+        const auto right=enabled.GetStatisticsSnapshot();
+        tests.Check(left.floorTraffic.size()==12 && right.floorTraffic.size()==12,
+            "both modes expose all floor statistics");
+        const auto verify=[&](const StatisticsSnapshot& snapshot)
+        {
+            std::uint64_t generated=0,boarded=0;
+            double waiting=0.0;
+            for(const auto& floor:snapshot.floorTraffic)
+            {
+                tests.Check(floor.generatedCount==floor.upRequestCount+floor.downRequestCount,
+                    "floor request directions sum to generated count");
+                tests.Check(floor.boardedCount<=floor.generatedCount,
+                    "floor boarded count cannot exceed generated count");
+                generated+=floor.generatedCount;
+                boarded+=floor.boardedCount;
+                waiting+=floor.totalWaitingTime;
+            }
+            tests.Check(generated==snapshot.totalPassengerCount,
+                "floor generated totals match global statistics");
+            tests.Check(boarded==snapshot.boardedCount,
+                "floor boarded totals match global statistics");
+            if(boarded!=0)
+                tests.Near(waiting/static_cast<double>(boarded),snapshot.averageWaitingTime,
+                    "floor wait sums match global average",1e-7);
+        };
+        verify(left); verify(right);
+        for(std::size_t index=0;index<left.floorTraffic.size();++index)
+            tests.Check(left.floorTraffic[index].generatedCount==right.floorTraffic[index].generatedCount &&
+                left.floorTraffic[index].upRequestCount==right.floorTraffic[index].upRequestCount &&
+                left.floorTraffic[index].downRequestCount==right.floorTraffic[index].downRequestCount,
+                "predictive switch does not alter fixed-seed request history");
+        tests.Check(disabled.ValidateState() && enabled.ValidateState(),
+            "both predictive modes preserve statistics invariants");
     });
     tests.Run("predictive rebalancing defaults off", [&] {
         auto config=Config(); config.floorCount=20; config.elevatorCount=6;

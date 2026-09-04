@@ -36,6 +36,7 @@ ElevatorSimulation/
 │  ├─ ElevatorSimulation.cpp / .h         原 App 入口（未修改）
 │  ├─ ElevatorSimulationDlg.cpp / .h      原对话框，最小快照接入
 │  ├─ StatisticsTrendView.cpp / .h        UI 层低频统计趋势自绘
+│  ├─ FloorAnalyticsViews.cpp / .h        Coverage 与历史楼层热力图自绘
 │  ├─ ElevatorSimulation.vcxproj           编译项与各配置
 │  ├─ ElevatorSimulation.vcxproj.filters   VS 虚拟分组
 │  ├─ ElevatorSimulation.rc / Resource.h  原资源，增加初始化状态控件标识
@@ -83,7 +84,7 @@ ElevatorSimulation/
 - `SimulationState`：Uninitialized、Ready、Running、Paused、Finished，用于总控制器生命周期。
 - `SimulationConfig`：L/N/K、S 秒/层、T 秒/人、总时长、全楼到达速率、仿真倍速、`TrafficPattern` 客流模式、`TrafficScenario` 场景与 `predictiveRebalancing` 开关；默认 `Fixed + Uniform`，预测式再平衡默认关闭。
 - `PassengerId`、`InvalidPassengerId=-1`、`InvalidElevatorId=-1`、`UnsetTime=-1.0`。
-- 原 `ElevatorSnapshot`、`FloorSnapshot`、`StatisticsSnapshot`、`ElevatorStatisticsSnapshot`；新增只读调度、乘客、外呼快照、UI 高频视图 `SimulationUISnapshot`，以及单梯动作事件，不重新定义原状态类型。`ElevatorSnapshot::repositionTargetFloor` 仅供展示，`InvalidFloor` 表示没有软目标。
+- 原 `ElevatorSnapshot`、`FloorSnapshot`、`StatisticsSnapshot`、`ElevatorStatisticsSnapshot`；新增只读调度、乘客、外呼快照、UI 视图 `SimulationUISnapshot`，以及 `FloorCoverageSnapshot` 当前预测和 `FloorTrafficStatistics` 历史楼层累计。`ElevatorSnapshot::repositionTargetFloor` 仅供展示，`InvalidFloor` 表示没有软目标。
 - 无状态函数 `GetDirection(startFloor, targetFloor)`；同层返回 Idle，但同层起终点的乘客仍属非法。
 
 禁止在其他文件重新定义 `ElevatorDirection`、`MoveDirection`、`PassengerStatus`、`ElevatorStatus`、`Config`、`SimulationParameter` 等语义重复类型。修改公共契约前，必须检查全部调用点并告知受影响的模块负责人。
@@ -130,13 +131,14 @@ Snapshot 按值构造：`SimulationWorker` 将 UI 所需的 `SimulationUISnapsho
 | `IsRunning()` / `IsFinished()` / `GetState()` | 查询生命周期 |
 | `GetCurrentTime()` / `GetConfig()` | 查询时间与配置副本 |
 | `GetElevatorSnapshots()` / `GetFloorSnapshots()` | 按电梯 ID / 楼层升序返回状态副本 |
+| `GetFloorCoverageSnapshots()` | 用当前完整调度快照和 Dispatcher LOOK ETA 返回全楼预测覆盖 |
 | `GetStatisticsSnapshot()` | 返回真实事件累计统计副本 |
 | `Initialize(config, seed)` / `GetRandomSeed()` | 固定种子初始化或读取本轮种子，便于复现 |
 | `AddPassenger(start, target)` | 当前时刻手工注入乘客，非法输入返回 InvalidPassengerId |
 | `GetPassengerSnapshots()` / `GetHallCallSnapshots()` | 读取活动乘客及外呼唯一归属副本 |
 | `ValidateState()` | 只读检查人数守恒、ID 所有权和外呼归属 |
 | `SetDispatcherExecutionMode(mode, workers)` | 选择 Sequential 或固定线程池 Parallel 评分；默认核心模式为 Sequential |
-| `GetUISnapshot()` | 由 Worker 线程构造 UI 所需只读副本，含 trafficScenario、activeTrafficPattern、trafficPhaseIndex；乘客明细按需使用独立接口 |
+| `GetUISnapshot()` | 由 Worker 线程构造 UI 所需只读副本，含当前 Coverage、楼层历史统计和客流阶段；乘客明细按需使用独立接口 |
 | `GetDispatchObservation(floor, direction)` | 只读返回真实 Hall Call 的单梯候选评分；请求不存在时返回 invalid |
 | `SimulationWorker::{Start,Pause,Resume,Reset,Stop}` | 将控制命令按 FIFO 交给工作线程；Stop 正常 join |
 | `SimulationWorker::GetLatestSnapshot()` | UI 线程原子读取最近发布的不可变快照 |
@@ -149,6 +151,12 @@ Snapshot 按值构造：`SimulationWorker` 将 UI 所需的 `SimulationUISnapsho
 Passenger/Floor/Elevator 的直接构造函数对基础非法字段抛出 `std::invalid_argument`。Simulation 检查乘客楼层上界，构造 Elevator 时传入完整配置使其校验任务上界；旧三参数 Elevator 构造函数仍保留兼容性，未指定建筑上界。
 
 Elevator 的 `SetRepositionTarget` / `ClearRepositionTarget` / `GetRepositionTarget` / `IsRepositioning` 管理低优先级软目标。只允许无乘客、无真实任务的 Idle 梯接受目标；真实 Hall Call 或 Internal Target 会立即覆盖软目标，但不取消已经开始的楼层间动作。`FleetRebalancer::BuildPlan` 是无副作用的只读计算入口，返回目标层与 expectedBenefit，提交仍由 Simulation 负责。
+
+`FleetRebalancer::BuildCoverageSnapshots` 对每个有效 `(floor, Up/Down)` 用全部电梯快照调用同一 `ScoreSnapshot`，取最小 feasible ETA。忙碌、载客、已接外呼和正在 soft reposition 的电梯均以真实状态参与。每层按 `w(f,Up/Down)` 加权合并 ETA，没有权重的方向忽略；完全没有可行运力时保留 infinity，UI 明确显示为不可达。这是当前未来预测，不写入历史统计。Worker 以 250 ms 节流重算 Coverage，每次仍使用该时刻的真实调度快照，避免 100 层大梯群拖慢 16 ms 核心推进。
+
+`StatisticsSnapshot::floorTraffic[f-1]` 自描述真实楼层 `f`：创建乘客时累计 generated 及 Up/Down，完成 Boarding 时累计 boarded、`boardTime-requestTime` 总和与最大值。平均值只以该层已上梯乘客为分母；Reset 重建全部楼层槽位并清零。
+
+UI 中，“算法观察”页在原 Hall Call 候选表右侧显示全楼 Coverage：高层在上，横条和颜色同时强调较差 ETA，直接标注需求权重/ETA，`R` 标记 repositionTarget；顶部显示最弱覆盖层、最高需求层和全楼加权平均 ETA，支持移入、点选和滚轮。“统计分析”页保留原趋势/概览，右侧热力图可切换“请求总数 / 平均等待 / 最大等待”。两者都是单一 GDI 自绘窗口，不按楼层创建 `CStatic`；20 层直接展开，最多 100 层使用内部纵向滚动。
 
 时间约定：所有模型时间单位为**仿真秒**；`Update` 的入参为**真实经过秒数**，内部乘一次 `simulationSpeed`。UI 不再调用 Update，Worker 使用 `steady_clock` 采样真实时间。Start/Pause/Resume/Reset 每次处理后都重置墙钟基点，暂停时段不会注入下一次 Update。非有限、零或负 deltaTime 被忽略；结束后不能 Start/Resume 重启，需 Reset。
 

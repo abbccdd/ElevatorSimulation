@@ -237,6 +237,27 @@ struct ElevatorStatisticsSnapshot
     double fullTime = 0.0;
 };
 
+// 历史统计：只由 Statistics 在乘客生成和完成上梯时累计。
+struct FloorTrafficStatistics
+{
+    int floor = 1;
+    std::uint64_t generatedCount = 0;
+    std::uint64_t upRequestCount = 0;
+    std::uint64_t downRequestCount = 0;
+    std::uint64_t boardedCount = 0;
+    double totalWaitingTime = 0.0;
+    double maxWaitingTime = 0.0;
+};
+
+// 当前未来预测：由真实调度快照和 Dispatcher LOOK ETA 即时计算。
+struct FloorCoverageSnapshot
+{
+    int floor = 1;
+    double demandWeight = 0.0;
+    double coverageEta = std::numeric_limits<double>::infinity();
+    bool hasRepositionTarget = false;
+};
+
 struct StatisticsSnapshot
 {
     std::size_t totalPassengerCount = 0;
@@ -248,6 +269,7 @@ struct StatisticsSnapshot
     double maxWaitingTime = 0.0;
     double averageRideTime = 0.0;
     std::vector<ElevatorStatisticsSnapshot> elevators;
+    std::vector<FloorTrafficStatistics> floorTraffic;
 };
 
 // UI 只读取这一份按值构造的完整视图，不接触 Simulation 的可写状态。
@@ -270,4 +292,5 @@ struct SimulationUISnapshot
     // 高频 UI 快照不填充乘客明细；按需使用 Simulation::GetPassengerSnapshots()。
     std::vector<PassengerSnapshot> passengers;
     std::vector<HallCallSnapshot> hallCalls;
+    std::vector<FloorCoverageSnapshot> floorCoverage;
 };

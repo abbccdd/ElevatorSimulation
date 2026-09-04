@@ -6,6 +6,7 @@
 
 #include "Core/SimulationWorker.h"
 #include "ElevatorBuildingView.h"
+#include "FloorAnalyticsViews.h"
 #include "StatisticsTrendView.h"
 #include "DashboardControls.h"
 #include "ElevatorDetailDashboardLarge.h"
@@ -103,11 +104,13 @@ private:
 	CButton m_panelToggle;
 	ElevatorBuildingView m_buildingView;
 	StatisticsTrendView m_statisticsTrendView;
+	FloorTrafficHeatmapView m_floorTrafficHeatmapView;
 	CTabCtrl m_pageTabs;
 	DashboardRightTabs m_rightTabs;
 	CStatic m_pagePlaceholder;
 	CStatic m_algorithmPageSummary;
 	CListCtrl m_algorithmCandidateList;
+	FloorCoverageView m_floorCoverageView;
 	CStatic m_elevatorDetailTitle;
 	ElevatorDetailDashboardLarge m_elevatorDetailBody;
 	CStatic m_algorithmPlaceholder;

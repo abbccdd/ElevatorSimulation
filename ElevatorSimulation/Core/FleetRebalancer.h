@@ -35,6 +35,13 @@ public:
     static std::vector<HallDemandWeight> BuildDemandWeights(
         int floorCount, TrafficPattern pattern);
 
+    static std::vector<FloorCoverageSnapshot> BuildCoverageSnapshots(
+        const std::vector<ElevatorDispatchSnapshot>& elevators,
+        int floorCount,
+        TrafficPattern pattern,
+        double currentTime,
+        const ElevatorDispatcher& dispatcher);
+
     RebalancePlan BuildPlan(
         const std::vector<ElevatorDispatchSnapshot>& elevators,
         const std::vector<int>& idleElevatorIndices,

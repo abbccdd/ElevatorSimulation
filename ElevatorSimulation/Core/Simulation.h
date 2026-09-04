@@ -46,11 +46,13 @@ public:
 
     std::vector<ElevatorSnapshot> GetElevatorSnapshots() const;
     std::vector<FloorSnapshot> GetFloorSnapshots() const;
+    std::vector<FloorCoverageSnapshot> GetFloorCoverageSnapshots() const;
     StatisticsSnapshot GetStatisticsSnapshot() const;
     std::vector<PassengerSnapshot> GetPassengerSnapshots() const;
     std::vector<HallCallSnapshot> GetHallCallSnapshots() const;
     DispatchObservationSnapshot GetDispatchObservation(int floor, Direction direction) const;
-    SimulationUISnapshot GetUISnapshot(bool workerActive = false) const;
+    SimulationUISnapshot GetUISnapshot(bool workerActive = false,
+        bool includeFloorCoverage = true) const;
     // 手工注入便于测试/演示，生成时间为当前仿真时间；失败返回 -1。
     PassengerId AddPassenger(int startFloor, int targetFloor);
     // 只读一致性诊断：所有权、人数守恒、楼层/方向、外呼唯一归属。
