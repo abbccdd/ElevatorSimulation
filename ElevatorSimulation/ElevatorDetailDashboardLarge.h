@@ -55,6 +55,8 @@ protected:
         }
         if (message == WM_ERASEBKGND)
             return TRUE;
+        if (message == WM_NCHITTEST)
+            return HTCLIENT;
         if (message == WM_LBUTTONUP)
         {
             const int x = static_cast<short>(LOWORD(lParam));
@@ -393,17 +395,27 @@ private:
     {
         CWnd* parent = GetParent();
         if (parent == nullptr) return;
+
         CWnd* tabsWindow = parent->GetDlgItem(IDC_TAB_RIGHT);
-        if (tabsWindow == nullptr) return;
+        if (tabsWindow != nullptr)
+        {
+            CTabCtrl* tabs = static_cast<CTabCtrl*>(tabsWindow);
+            tabs->SetCurSel(0);
+            tabs->ShowWindow(SW_SHOW);
+        }
 
-        CTabCtrl* tabs = static_cast<CTabCtrl*>(tabsWindow);
-        tabs->SetCurSel(0);
+        if (CWnd* hallCalls = parent->GetDlgItem(IDC_LIST_HALL_CALLS))
+        {
+            hallCalls->ShowWindow(SW_SHOW);
+            hallCalls->Invalidate(FALSE);
+        }
+        if (CWnd* detailTitle = parent->GetDlgItem(IDC_RIGHT_ELEVATOR_TITLE))
+            detailTitle->ShowWindow(SW_HIDE);
+        if (CWnd* detailBody = parent->GetDlgItem(IDC_RIGHT_ELEVATOR_DETAILS))
+            detailBody->ShowWindow(SW_HIDE);
+        if (CWnd* algorithm = parent->GetDlgItem(IDC_RIGHT_ALGORITHM_PLACEHOLDER))
+            algorithm->ShowWindow(SW_HIDE);
 
-        NMHDR notification{};
-        notification.hwndFrom = tabs->GetSafeHwnd();
-        notification.idFrom = IDC_TAB_RIGHT;
-        notification.code = TCN_SELCHANGE;
-        parent->SendMessage(WM_NOTIFY, IDC_TAB_RIGHT,
-            reinterpret_cast<LPARAM>(&notification));
+        parent->Invalidate(FALSE);
     }
 };
