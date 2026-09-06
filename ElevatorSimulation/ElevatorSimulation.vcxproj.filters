@@ -143,6 +143,15 @@
     <None Include="..\Tests\FloorTests.cpp">
       <Filter>Development</Filter>
     </None>
+    <None Include="..\Tests\StatisticsTests.cpp">
+      <Filter>Development</Filter>
+    </None>
+    <None Include="..\Tests\SystemTests.cpp">
+      <Filter>Development</Filter>
+    </None>
+    <None Include="..\Tests\ReliabilityTests.cpp">
+      <Filter>Development</Filter>
+    </None>
     <None Include="..\Tests\RunCoreTests.cmd">
       <Filter>Development</Filter>
     </None>

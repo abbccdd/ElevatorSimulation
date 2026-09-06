@@ -259,6 +259,9 @@
     <None Include="..\Tests\ElevatorTests.cpp" />
     <None Include="..\Tests\SimulationTests.cpp" />
     <None Include="..\Tests\FloorTests.cpp" />
+    <None Include="..\Tests\StatisticsTests.cpp" />
+    <None Include="..\Tests\SystemTests.cpp" />
+    <None Include="..\Tests\ReliabilityTests.cpp" />
     <None Include="..\Tests\RunCoreTests.cmd" />
     <None Include="..\docs\AlgorithmDesign.md" />
   </ItemGroup>
