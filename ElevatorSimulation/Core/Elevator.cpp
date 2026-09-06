@@ -27,7 +27,7 @@ Elevator::Elevator(int id, int initialFloor, const SimulationConfig& config)
 ElevatorSnapshot Elevator::GetSnapshot() const
 {
     return { m_id, m_currentFloor, m_direction, m_state,
-        static_cast<int>(m_passengerIds.size()), m_capacity };
+        static_cast<int>(m_passengerIds.size()), m_capacity, m_repositionTargetFloor };
 }
 
 ElevatorDispatchSnapshot Elevator::GetDispatchSnapshot() const
@@ -95,6 +95,7 @@ bool Elevator::AddHallCall(int floor, Direction direction)
         (floor == 1 && direction == Direction::Down) ||
         (m_floorCount > 0 && floor == m_floorCount && direction == Direction::Up))
         return false;
+    ClearRepositionTarget();
     (direction == Direction::Up ? m_upHallCalls : m_downHallCalls).insert(floor);
     RebuildTasks();
     if (m_state == ElevatorState::Idle)
@@ -118,6 +119,7 @@ bool Elevator::RemoveHallCall(int floor, Direction direction)
 bool Elevator::AddInternalTarget(int floor)
 {
     if (!IsValidFloor(floor) || floor == m_currentFloor) return false;
+    ClearRepositionTarget();
     m_carCalls.insert(floor);
     RebuildTasks();
     if (m_state == ElevatorState::Idle)
@@ -125,6 +127,18 @@ bool Elevator::AddInternalTarget(int floor)
         m_direction = GetDirection(m_currentFloor, floor);
         ChooseActionAtFloor();
     }
+    return true;
+}
+
+bool Elevator::SetRepositionTarget(int floor)
+{
+    if (!IsValidFloor(floor) || floor == m_currentFloor || m_state != ElevatorState::Idle ||
+        !m_passengerIds.empty() || !m_carCalls.empty() ||
+        !m_upHallCalls.empty() || !m_downHallCalls.empty())
+        return false;
+    m_repositionTargetFloor = floor;
+    m_direction = GetDirection(m_currentFloor, floor);
+    ChooseActionAtFloor();
     return true;
 }
 
@@ -217,6 +231,19 @@ void Elevator::ChooseActionAtFloor()
             return;
         }
         m_direction = m_direction == Direction::Up ? Direction::Down : Direction::Up;
+    }
+    if (m_repositionTargetFloor != InvalidFloor)
+    {
+        if (m_currentFloor == m_repositionTargetFloor)
+            m_repositionTargetFloor = InvalidFloor;
+        else
+        {
+            m_direction = GetDirection(m_currentFloor, m_repositionTargetFloor);
+            m_state = m_direction == Direction::Up ?
+                ElevatorState::MovingUp : ElevatorState::MovingDown;
+            m_actionRemaining = m_moveTimePerFloor;
+            return;
+        }
     }
     m_direction = Direction::Idle;
     m_state = ElevatorState::Idle;

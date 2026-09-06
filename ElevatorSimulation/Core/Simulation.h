@@ -3,6 +3,8 @@
 #include "CommonTypes.h"
 #include "Dispatcher.h"
 #include "Elevator.h"
+#include "EventScheduler.h"
+#include "FleetRebalancer.h"
 #include "Floor.h"
 #include "Passenger.h"
 #include "../Statistics/Statistics.h"
@@ -36,12 +38,21 @@ public:
     SimulationState GetState() const noexcept { return m_state; }
     double GetCurrentTime() const noexcept { return m_currentTime; }
     SimulationConfig GetConfig() const { return m_config; }
+    void SetDispatcherExecutionMode(DispatcherExecutionMode mode, std::size_t workerCount = 0)
+    { m_dispatcher.SetExecutionMode(mode, workerCount); }
+    DispatcherExecutionMode GetDispatcherExecutionMode() const noexcept
+    { return m_dispatcher.GetExecutionMode(); }
+    std::size_t GetDispatcherWorkerCount() const noexcept { return m_dispatcher.GetWorkerCount(); }
 
     std::vector<ElevatorSnapshot> GetElevatorSnapshots() const;
     std::vector<FloorSnapshot> GetFloorSnapshots() const;
+    std::vector<FloorCoverageSnapshot> GetFloorCoverageSnapshots() const;
     StatisticsSnapshot GetStatisticsSnapshot() const;
     std::vector<PassengerSnapshot> GetPassengerSnapshots() const;
     std::vector<HallCallSnapshot> GetHallCallSnapshots() const;
+    DispatchObservationSnapshot GetDispatchObservation(int floor, Direction direction) const;
+    SimulationUISnapshot GetUISnapshot(bool workerActive = false,
+        bool includeFloorCoverage = true) const;
     // 手工注入便于测试/演示，生成时间为当前仿真时间；失败返回 -1。
     PassengerId AddPassenger(int startFloor, int targetFloor);
     // 只读一致性诊断：所有权、人数守恒、楼层/方向、外呼唯一归属。
@@ -57,6 +68,7 @@ private:
     std::vector<Elevator> m_elevators;
     std::unordered_map<PassengerId, Passenger> m_passengers;
     ElevatorDispatcher m_dispatcher;
+    FleetRebalancer m_fleetRebalancer;
     Statistics m_statistics;
     struct HallCall
     {
@@ -71,13 +83,27 @@ private:
     std::uint32_t m_seed = 0;
     std::mt19937 m_random;
     double m_nextArrivalTime = 0.0;
+    EventScheduler m_eventScheduler;
+    // 绝对仿真完成时刻；无计时动作时为 infinity。
+    std::vector<double> m_elevatorScheduledTimes;
+    std::size_t m_trafficPhaseIndex = 0;
+    TrafficPattern m_activeTrafficPattern = TrafficPattern::Uniform;
+    double m_activePassengerRate = 0.0;
+    double m_currentPhaseEnd = 0.0;
     bool m_dispatchDirty = true; // 仅模型事件置脏，帧边界不触发重评估。
     double m_lastReassessmentTime = UnsetTime;
+    bool m_rebalanceDirty = true;
+    double m_lastFleetRebalanceTime = UnsetTime;
 
-    void GenerateDuePassengers();
+    void GeneratePassengerArrival();
+    void HandleTrafficPhaseChange();
+    void ScheduleNextPassengerArrival();
+    void AdvanceClockTo(double newTime);
+    void ScheduleMissingElevatorEvents();
     std::vector<ElevatorDispatchSnapshot> BuildDispatchSnapshots() const;
     HallCallDispatchSnapshot BuildHallCallSnapshot(const HallCallKey& key, const HallCall& call) const;
     bool DispatchCalls();
+    void RebalanceIdleFleet();
     void StabilizeCurrentTime();
     void ReleaseHallCall(int floor, Direction direction, int elevatorId);
     void HandleElevatorEvent(int elevatorId, const ElevatorEvent& event);

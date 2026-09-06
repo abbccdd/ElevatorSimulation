@@ -25,6 +25,10 @@ public:
     bool RemoveHallCall(int floor, Direction direction);
     bool HasHallCall(int floor, Direction direction) const;
     bool AddInternalTarget(int floor);
+    bool SetRepositionTarget(int floor);
+    void ClearRepositionTarget() noexcept { m_repositionTargetFloor = InvalidFloor; }
+    int GetRepositionTarget() const noexcept { return m_repositionTargetFloor; }
+    bool IsRepositioning() const noexcept { return m_repositionTargetFloor != InvalidFloor; }
     bool IsAtStop() const noexcept { return m_state == ElevatorState::Stopped; }
     bool CanBoard() const noexcept;
     PassengerId GetNextAlightingPassenger() const;
@@ -55,6 +59,7 @@ private:
     std::map<PassengerId, int> m_destinations;
     PassengerId m_pendingPassengerId = InvalidPassengerId;
     int m_pendingTarget = 0;
+    int m_repositionTargetFloor = InvalidFloor;
 
     bool IsValidFloor(int floor) const noexcept;
     bool HasTasksAhead(Direction direction) const;

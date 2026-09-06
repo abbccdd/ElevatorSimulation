@@ -3,11 +3,24 @@
 #include "CommonTypes.h"
 #include "Elevator.h"
 
+#include <cstddef>
+#include <memory>
 #include <vector>
+
+class FixedThreadPool;
 
 class ElevatorDispatcher
 {
 public:
+    ElevatorDispatcher();
+    explicit ElevatorDispatcher(DispatcherExecutionMode mode, std::size_t workerCount = 0);
+    ~ElevatorDispatcher();
+
+    ElevatorDispatcher(const ElevatorDispatcher&) = delete;
+    ElevatorDispatcher& operator=(const ElevatorDispatcher&) = delete;
+    ElevatorDispatcher(ElevatorDispatcher&&) noexcept;
+    ElevatorDispatcher& operator=(ElevatorDispatcher&&) noexcept;
+
     // Aging 每等待一秒提供的成本折扣；总折扣有上限，避免等待时间压倒路线质量。
     static constexpr double AgingBonusRate = 0.05;
     static constexpr double MaxAgingBonus = 8.0;
@@ -32,6 +45,10 @@ public:
 
     double GetAgingBonus(double requestTime, double currentTime) const noexcept;
 
+    void SetExecutionMode(DispatcherExecutionMode mode, std::size_t workerCount = 0);
+    DispatcherExecutionMode GetExecutionMode() const noexcept { return m_executionMode; }
+    std::size_t GetWorkerCount() const noexcept;
+
     DispatchScore ScoreSnapshot(int requestFloor, Direction requestDirection,
         const ElevatorDispatchSnapshot& elevator,
         double requestTime = UnsetTime, double currentTime = UnsetTime) const;
@@ -41,4 +58,12 @@ public:
     int SelectReassignment(const HallCallDispatchSnapshot& request, int currentElevatorIndex,
         const std::vector<ElevatorDispatchSnapshot>& elevators, double currentTime,
         double lastReassignmentTime = UnsetTime) const;
+
+private:
+    DispatcherExecutionMode m_executionMode = DispatcherExecutionMode::Sequential;
+    std::unique_ptr<FixedThreadPool> m_threadPool;
+
+    std::vector<DispatchScore> ScoreSnapshots(int requestFloor, Direction requestDirection,
+        const std::vector<ElevatorDispatchSnapshot>& elevators,
+        double requestTime, double currentTime) const;
 };

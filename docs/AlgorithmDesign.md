@@ -58,6 +58,14 @@ Alighting 进行中时，当前一人仍包含在乘客数和该层下客计数�
 
 验证包含手算成本的上下阈值、真实 Elevator 动作推进对照、108 组混合任务路线、双向经过同层的事件消费，以及 Simulation 真实 FIFO/Boarding 端到端用例。
 
+### Sequential / Parallel 候选评分
+
+`ElevatorDispatcher` 保留 Sequential 和 Parallel 两种执行模式。Parallel 模式只把同一请求对各 `ElevatorDispatchSnapshot` 的 `ScoreSnapshot` 调用提交到一个固定大小的 C++17 线程池；ETA、Cost、feasible 都只读取值快照，任务之间没有共享写入。不会创建“一部电梯一个 OS 线程”，线程池在 Dispatcher 生命周期内复用，析构时停止并 join 全部 worker。
+
+评分结果按原电梯容器下标写回数组，待全部 future 完成后，调用 Simulation 的线程仍按 Cost、ETA、距离、任务数、elevatorId 的稳定规则统一比较。线程完成顺序不会进入比较键。动态改派的其他候选和联合分配每层递归中的 N 台候选使用同一批量评分；联合搜索的递归结构、最多三候选、64 叶上限及叶组合最终复评保持串行原样。Simulation 对真实 Elevator/Hall Call 的撤销、添加和移动提交也仍是单线程。
+
+默认直接构造的 Simulation/Dispatcher 使用 Sequential，便于原测试和兼容调用；UI 的 SimulationWorker 显式启用 Parallel。`SetDispatcherExecutionMode(mode, workerCount)` 可指定固定线程数；显式非零值保持原值，0 表示使用 `min(hardware_concurrency-1, 8)`（最少 1）。fixed seed 回归在每个仿真秒比较两种模式的电梯、乘客、外呼归属和统计，结果一致。
+
 ### 带滞回的动态重分配
 
 `ScoreSnapshot` 提供可行性、ETA、Cost 和预计人数，供原选择器、改派和联合分配共用；没有新增第二套 ETA。`SelectReassignment` 先计算原梯评分，再在其他可行候选中按 ETA、Cost、距离、任务数、ID 选择最好者。原梯可行时要求 `CurrentETA - BestETA >= ReassignThresholdSeconds`；原梯预测到请求层无座位时允许立即寻找替代，绕过普通临近锁、冷却和收益阈值，其他梯仍须通过完整容量校验。没有可行替代时保留归属，等待后续事件。
@@ -104,6 +112,17 @@ Alighted、外呼释放等模型事件继续置 m_dispatchDirty；改派中的�
 
 每批窗口预筛最多 P×N 次 ScoreSnapshot（P 为当前 pending 数，找到三个 Active 即停止扫描）；随后三请求搜索至多 21N 次前缀候选评分，加至多 192 次叶请求复评。单次 ETA 自身还随已有任务和可上客人数增长。DispatchPlan 的 evaluatedCombinations / scoreEvaluations 仅统计联合搜索，不包含预筛；60 台电梯回归确认单批组合仍不超过 64。一次事件可执行多个批次，64 不是整次事件的上限。每轮改派还需约 H×N 次评分（H 为已分配外呼数），成功改派后重建快照；多批分配期间不重复改派。历史初版约 4 秒跑完 600 仿真秒仅是本机结果，不是实时性能保证。
 
+当前并行评分的独立微基准使用 `Tests/RunDispatchPerformance.ps1 x64`、MSVC `/O2 /MD`、120 层混合 LOOK 任务、每种 N 运行 120 次选择。本机使用默认上限 8 个线程，结果如下；所有串并行选择序列一致：
+
+| N | Sequential ms/次 | Parallel ms/次 | 加速比 |
+| ---: | ---: | ---: | ---: |
+| 6 | 0.0709 | 0.0555 | 1.28× |
+| 30 | 0.3765 | 0.1453 | 2.59× |
+| 60 | 0.7661 | 0.1938 | 3.95× |
+| 120 | 1.4911 | 0.3342 | 4.46× |
+
+这是候选评分微基准，不包含 MFC、Snapshot 复制或真实墙钟调度；任务更短、N 更小或核心更少时，线程池调度开销可能抵消收益。
+
 ## 3. Elevator：方向保持与动作事件
 
 沿用原状态，不添加第二套运行枚举：
@@ -138,9 +157,19 @@ stateDiagram-v2
 
 ## 4. Simulation：事件推进与外呼生命周期
 
-UI 只传真实秒；唯一乘倍速的位置是 `Simulation::Update`。本轮最大仿真增量先截断到总时长。每次取以下最小时间间隔，同时推进全部电梯：本轮 Update 剩余时间、下一名乘客到达、各梯下一动作完成时间。
+MFC 主线程不再持有或直接调用 Simulation。`SimulationWorker` 的独立工作线程构造唯一真实 Simulation，并成为 Elevator、Passenger、Floor、Hall Call、Statistics 与随机数状态的唯一写入者。Start/Pause/Resume/Reset/Stop 是一个互斥量保护的 FIFO 命令队列；队列只传枚举命令，不传核心对象引用。
 
-同一时刻先处理全部电梯完成事件（稳定按 ID），再产生到达乘客，最后进行分配和停站处理。每次停站先下后上；开始 Boarding/Alighting 只是登记计时，完成必须等待后续事件。零耗时决策循环不会消耗 S/T，并设有依任务数计算的收敛保护，错误不会被静默忽略。
+工作线程运行时以 `steady_clock` 每约 16 ms 计算一次真实 delta，再调用原 `Simulation::Update`；核心内部仍只在这一处乘 simulationSpeed。处理 Pause 前会先推进到当前采样点，Pause/Resume/Reset/Start 后立即重置墙钟基点，因此暂停期间等待的真实时间不会进入恢复后的 delta。Stop 唤醒工作线程、发布 `workerActive=false` 的最后快照并 join；线程池也随 Dispatcher 正常 join，不使用 detached thread。
+
+每次命令或推进后，Worker 在自身线程调用 `GetUISnapshot()`，按值复制 UI 实际使用的电梯、楼层、Hall Call 和统计视图，再通过 C++17 `atomic_store(shared_ptr<const SimulationUISnapshot>)` 发布。高频 UI 快照不复制 Passenger 明细；测试和后续按需功能继续使用独立 `GetPassengerSnapshots()`。MFC 33 ms Timer 只 `atomic_load` 最近快照并更新控件，既不调用 Update，也不扫描或修改 Simulation。共享可写区域仅有短命令队列和最新 shared_ptr，没有给核心各容器增加 mutex。
+
+Coverage 也在 Worker 线程中由真实 `ElevatorDispatchSnapshot` 只读计算。为避免 100 层×99 梯时对每个 16 ms 推进都做全量 LOOK 预演，Worker 最多每 250 ms 重算一次并把结果随高频 UI Snapshot 发布；每次重算均使用该时刻的完整快照，不缓存或修改调度状态。
+
+UI 只传真实秒；唯一乘倍速的位置是 `Simulation::Update`。本轮最大仿真增量先截断到总时长。消耗时间的事件由 `EventScheduler` 的 `priority_queue` 最小堆管理：PassengerArrival、OfficeDay 的 TrafficPhaseChange、SimulationEnd，以及每台 Moving/Boarding/Alighting 电梯唯一的 ElevatorAction。每梯另存绝对动作完成时刻；Update 直接跳到堆顶时间，只对事件所属电梯调用 `Advance`，不再扫描所有电梯的下一动作或推进未到期电梯。事件间隔内电梯状态不变，`AdvanceClockTo` 仍遍历全部电梯累计该段状态统计。
+
+事件全序依次比较绝对时间、类型（ElevatorAction、TrafficPhaseChange、PassengerArrival、SimulationEnd）、ElevatorAction 的电梯 ID，最终用单调 sequence 消除完全相同键的偶然顺序。同一时刻先按 ID 完成全部电梯动作，再切换客流阶段、产生到达乘客，最后只调用一次 `StabilizeCurrentTime`，并为新进入计时状态的电梯补入后续事件。每次停站先下后上；开始 Boarding/Alighting 只是登记计时，完成必须等待后续事件。零耗时决策循环不会消耗 S/T，并设有依任务数计算的收敛保护，错误不会被静默忽略。
+
+由于未到期电梯不再随全局时钟反复执行部分 `Advance`，其对象内 `m_actionRemaining` 保留动作开始时的完整时长。Simulation 构造调度快照时用 `max(0, scheduledCompletionTime-currentTime)` 覆盖 `remainingActionTime`，因此 Dispatcher 的 LOOK/ETA/Cost 公式无需修改。暂停不改变日历中的绝对仿真时刻；Reset 清空旧历并用原 seed 重建首次到达与 SimulationEnd。截止时刻允许先完成恰好到期的 ElevatorAction，但不生成恰好截止的乘客，也不再启动新的零耗时后续服务。
 
 Hall Call 用 `(真实楼层, Up/Down)` 作为唯一键。每个方向外呼最多一台负责梯，尚未分配时 ID=-1。同一方向后来产生的乘客加入同一 FIFO 队列；待分配外呼跳过临时 Deferred，按最老三个 Active 连续分批规划。已分配请求在事件触发时按上述服务锁、原梯可行性及滞回条件改派，不在每帧反复抢单。
 
@@ -148,7 +177,43 @@ Hall Call 用 `(真实楼层, Up/Down)` 作为唯一键。每个方向外呼最�
 
 Passenger 仍由 Simulation 的注册表按值唯一拥有。同一轮 ID 从 0 递增，已到达后不复用；达到类型上限时明确失败。下梯完成时 Elevator 先移除 ID，Simulation 更新 Passenger 与 Statistics 后删除活动对象。`ValidateState()` 提供只读人数守恒、队列/轿厢 ID 唯一性、状态及外呼归属诊断。
 
-随机模型：`passengerRate = λ` 为**全楼平均人数 / 仿真秒**；`Δt = -ln(U)/λ`，U 严格位于 (0,1)。起点在 1~L 均匀取样，终点从另外 L-1 层均匀取样；0 速率表示不随机生成。产生人数不被强制等于 λ×时长。`mt19937` 归 Simulation 持有，改变帧大小不会重新抽样。`Initialize(config, seed)` 指定种子；无 seed 的原接口获取随机种子，`GetRandomSeed()` 可记录，`Reset()` 重用本轮 seed。复现以相同实现/工具链为准，不承诺不同标准库的分布实现逐位相同。
+随机模型：`passengerRate = λ` 为**全楼平均人数 / 仿真秒**；`Δt = -ln(U)/λ`，U 严格位于 (0,1)。Fixed 使用配置中的固定 TrafficPattern/λ，保持原固定 seed 轨迹。OfficeDay 固定为三段：0%~25% UpPeak/1.5λ、25%~70% InterFloor/0.75λ、70%~100% DownPeak/1.5λ。到达候选只有严格早于当前阶段终点才入历；否则等待 TrafficPhaseChange 后从边界重新抽样，利用指数分布无记忆性，不保存或取消旧到达。0 速率表示不随机生成。`mt19937` 归 Simulation 持有，改变帧大小不会重新抽样；`Reset()` 重用本轮 seed 并重建全部阶段事件。
+
+## 基于未来服务能力预测的梯群覆盖再平衡
+
+固定让空闲梯返回底层、中层或顶层，只反映预设位置比例，无法识别正在运行的电梯已经承诺了哪些内呼和外呼，也无法识别这些真实路线即将形成的未来服务能力。本系统采用 bounded greedy predictive rebalancing：先用所有忙碌/已承诺电梯形成未来 ETA 覆盖，再让真正空闲的电梯补充边际覆盖缺口。功能由 `SimulationConfig::predictiveRebalancing` 控制，默认关闭，因此旧配置、固定 seed 和既有调度结果保持不变。
+
+### 需求权重
+
+对未来外呼 `(f,d)` 定义下一位乘客在该楼层发出该方向外呼的概率 `w(f,d)`。权重直接来自 Passenger Route Generator，而不是经验楼层权重。Uniform 为：
+
+`w_U(f,Up) = (1/L) × (L-f)/(L-1)`，`w_U(f,Down) = (1/L) × (f-1)/(L-1)`。
+
+UpPeak 使用 `0.75 × PeakUp + 0.25 × Uniform`，且只有 `PeakUp(1,Up)=1`。DownPeak 使用 `0.75 × PeakDown + 0.25 × Uniform`，其中 `PeakDown(f,Down)=1/(L-1)`（`f=2..L`）。InterFloor 在 `L>=3` 时使用 `0.90 × q + 0.10 × Uniform`，其中：
+
+`q(f,Up) = (1/(L-1)) × (L-f)/(L-2)`，`q(f,Down) = (1/(L-1)) × (f-2)/(L-2)`（`f>=2`）。
+
+`L=2` 时沿用生成器的 Uniform fallback。OfficeDay 不维护第二套需求模型，直接把当前 `m_activeTrafficPattern` 和当前阶段的 active passenger rate 传入再平衡器。
+
+### ETA 覆盖与目标函数
+
+预测窗为 `H=max(15, 0.5×(L-1)×S)`。对每个未来外呼，忙碌梯使用 `ElevatorDispatcher::ScoreSnapshot(f,d,snapshot,currentTime,currentTime)` 计算 ETA；请求时间等于当前时间使 Aging 为零。由此当前方向、当前楼层间剩余时间、上下客、容量、内部目标、双向外呼和 LOOK 折返全部复用正式 Dispatcher 语义。覆盖值为 `C(f,d)=min(H,best ETA)`；没有可行忙碌梯时为 `H`。
+
+可视化的 `FloorCoverageSnapshot` 与再平衡目标函数共用需求权重和同一 `ScoreSnapshot`，但它表示当前全梯群而非“仅忙碌梯基线”。对每个有权重方向取全部电梯的原始最小 feasible ETA（不做 `H` 截断），再按楼层计算 `[Σ_d w(f,d)C(f,d)]/[Σ_d w(f,d)]`。运行、载客、执行 Hall Call 和 soft reposition 的电梯都以快照真实状态参与；无可行梯保留 infinity 供 UI 显示“不可达”。
+
+空闲梯在候选层 `x` 的能力由无乘客、无任务、无预留的虚拟 Idle `ElevatorDispatchSnapshot` 再次调用同一个 `ScoreSnapshot` 得到 `V(x,f,d)`，不另写距离 ETA。实现预计算 busy coverage 和所有 `VirtualETA[x][f][d]`。
+
+令 `M=λH`，当前覆盖的响应暴露为 `R(C)=M×Σw(f,d)C(f,d)`。候选驻点的边际收益为 `CoverageGain(x)=M×Σw(f,d)[C_before(f,d)-min(C_before(f,d),V(x,f,d))]`。空驶时间 `Tmove(i,x)=|c_i-x|S`，空驶惩罚系数为 0.25，因此 `NetGain(i,x)=CoverageGain(x)-0.25×Tmove(i,x)`。只有净收益严格大于零才移动；零流量自然没有主动再定位。
+
+### 贪心边际覆盖与软目标
+
+每轮先计算每个候选层的 CoverageGain，再在剩余空闲梯中选取到该层空驶代价最低者；全局选择 NetGain 最大的 `(elevator,floor)`，更新 `coverage=min(coverage,V)`，移除该梯后继续。已覆盖区域的后续边际收益会降低，因此多台空闲梯不会各自独立抢同一位置。该算法是有界贪心方法，不声称全局最优。
+
+再平衡目标保存在 `Elevator::m_repositionTargetFloor`，不加入 internal calls、Hall Calls、up/down tasks 或 stopServices，也不增加 `ElevatorState`。正在空驶的电梯仍以当前 Moving 状态、方向和 `remainingActionTime` 参与真实 Hall Call Dispatcher 评分。真实 Hall Call 或 Internal Target 一旦加入便立即清除软目标；已经开始的当前楼层间动作照常完成，到下一层后按真实 LOOK 路线继续。TrafficPhaseChange 可以清除旧软目标，Reset 会重建所有电梯并清空目标。
+
+Simulation 只在模型事件请求后、`StabilizeCurrentTime()` 的真实调度收敛末尾考虑再平衡，同一仿真时刻最多一次，普通冷却为 5 仿真秒；冷却期事件不会留下等待到 UI 帧边界执行的计划。不开新事件类型、线程、取消队列或 stale token。
+
+局限包括：只使用当前 TrafficPattern，不预测未来精确 Hall Call；以单请求 ETA 作为覆盖指标；贪心有限搜索不是全局最优；空驶惩罚是固定可解释系数，而不是学习结果。
 
 允许在 Ready/Running/Paused 时用 `AddPassenger` 在当前时刻手工加入乘客，供测试或后续演示使用。非法输入不消耗 ID，Uninitialized/Finished 禁止注入。
 
@@ -164,15 +229,17 @@ Passenger 仍由 Simulation 的注册表按值唯一拥有。同一轮 ID 从 0 
 - 最大等待时间只统计已上梯者；尚在等待的队列不能混入该已完成样本均值。
 - `total = waiting + riding + arrived`，`boarded = riding + arrived`。
 - 各梯统计已送达人数、完成的移动层数、其中空载层数、Idle 秒数及实际人数等于 K 的满载秒数。上梯预留席位影响调度，但未完成上梯时不算实际满载时长。
+- 每层 `FloorTrafficStatistics` 只是历史事件累计：乘客创建时增加 generated 和请求方向，完成 Boarding 时增加 boarded、等待总时间和最大值。楼层平均等待为 `boardedCount==0 ? 0 : totalWaitingTime/boardedCount`，Reset 清空所有楼层槽位。
+- Coverage 不写入 Statistics，历史热力图也不参与未来运力预测；两者仅在 `SimulationUISnapshot` 展示层并列。
 
 评价算法必须同时报告送达量、截止积压和等待/乘梯时间；不能只拿已服务样本的低均值证明高客流性能好。
 
 ## 6. 当前边界
 
-没有神经网络、强化学习、遗传算法、粒子群或复杂预测；没有数据库、网络业务或多线程。当前仅使用阈值改派与最多三请求的有限搜索，不含分区停车、峰值交通学习或严格等待时间上界。超出服务能力的持续输入会积压，有限批次则应在足够时长内清空。
+没有神经网络、强化学习、遗传算法、粒子群或复杂预测；没有数据库或网络业务。多线程仅用于 Simulation/UI 所有权隔离和只读候选评分，Elevator 状态机与真实提交仍为单线程。当前仅使用阈值改派与最多三请求的有限搜索，不含分区停车、峰值交通学习或严格等待时间上界。超出服务能力的持续输入会积压，有限批次则应在足够时长内清空。
 
 联合搜索只覆盖最老三个 Active 请求及每个前缀的前三候选，会遗漏截断以外的更优组合；它不优化已分配其他请求的全局总等待。Deferred 只反映当前快照可行性，不保证未来一定能及时服务；预筛还会增加事件内计算量。动态改派优化单个请求的 ETA，可能增加其他乘客等待或旧梯的空驶；距离锁和冷却也可能错过短暂机会。不能同时保证所有样本等待下降、全局最优和常数开销。
 
 ETA 固定本次快照中的已分配任务和已知队列。未来新增乘客、新分配外呼以及剩余队列重分配可能改变路线，因此预测不等于未来实际响应时间。这种局部评分也不保证群控全局最优；有上限的 Aging 不能在持续超载时给出有限等待保证。
 
-UI 仍是初始化快照窗口，不自动启动或持续调用 Update；正式按钮、参数输入和动画由 UI 模块后续实现。核心动态状态已可通过原三类 Snapshot 及新增乘客/外呼快照读取。
+UI 已提供开始、暂停、继续、重置、停止按钮和 Snapshot 定时刷新；参数输入和正式动画仍待后续实现。核心动态状态只通过不可变 `SimulationUISnapshot` 跨线程传给 UI。
