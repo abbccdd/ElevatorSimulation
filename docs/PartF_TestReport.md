@@ -86,13 +86,14 @@ E6: 送达=0 移动=0 空驶=0 满载=0次 满载时长=0.00s 空闲=145.00s 工
 | --- | --- | --- |
 | **Statistics（新增）** | 17 场景 / 43 断言 / 0 失败 | 17 / 43 / 0 失败 |
 | **System（新增）** | 17 场景 / 50 断言 / 0 失败 | 17 / 50 / 0 失败 |
+| **Reliability（新增）** | 20 场景 / 80 断言 / 0 失败 | 20 / 80 / 0 失败 |
 | Dispatcher | 83 / 444 / 0 失败 | 83 / 444 / 0 失败 |
 | Elevator | 26 / 87 / 0 失败 | 26 / 87 / 0 失败 |
 | Simulation | 41 / 2149 / 0 失败 | 41 / 2149 / 0 失败 |
 | Floor | 10 / 35 / 0 失败 | 10 / 35 / 0 失败 |
 | 冒烟基线 | 406 项通过 | 406 项通过 |
 
-合计每架构 **194 场景 / 2808 断言 + 406 冒烟项**，全部通过。四配置重建 0 警告 0 错误。
+合计每架构 **214 场景 / 2888 断言 + 406 冒烟项**，全部通过。四配置重建 0 警告 0 错误。
 
 ---
 
@@ -130,5 +131,20 @@ E6: 送达=0 移动=0 空驶=0 满载=0次 满载时长=0.00s 空闲=145.00s 工
 ## 7. 结论
 
 - F 需求全部满足：总量/均值/分梯统计（含满载次数、工作时间）、9 类典型情况、5 类异常检查、低/正常/高客流、算法对比表格、Statistics 代码与系统测试记录均已交付
-- 双架构 6 套件 194 场景 / 2808 断言 + 406 冒烟项，0 失败
+- 双架构 7 套件 214 场景 / 2888 断言 + 406 冒烟项，0 失败
 - 满载次数/工作时间以 Statistics 内部跟踪 + 只读接口/文本汇总提供（未改公共快照类型，避免触碰 Core/CommonTypes.h）；如需进公共快照供 UI 直接读取，需另行授权修改 Core
+- 完整测试数据集见 [docs/F_TestData.md](file:///e:/360MoveData/Users/sun/Documents/GitHub/ElevatorSimulation/docs/F_TestData.md)（13 场景汇总 + 分梯明细 + 一致性核验）
+
+---
+
+## 8. 今日改动总览（2026-09-06）
+
+| 提交/文件 | 内容 | 范围 |
+| --- | --- | --- |
+| `0725e1e`（A 部分） | `Core/Floor` 新增 `EnqueueBatch`/`Contains`（批量交通输入）；`Tests/FloorTests.cpp`（10/35）；RunCoreTests.cmd + vcxproj/filters 登记；`docs/PartA_TestReport.md` | Floor/Tests/登记/文档 |
+| `8e8a819`（F 部分） | `Statistics` 新增 `FormatSummary`/`GetFullLoadCount`/`GetWorkingTime`；`StatisticsTests`（17/43）、`SystemTests`（17/50）、`ReliabilityTests`（20/80）；`DispatchComparison` 扩至 8 场景；RunCoreTests.cmd + vcxproj/filters 登记；`docs/PartF_TestReport.md`、`docs/Reliability_TestReport.md` | Statistics/Tests/登记/文档 |
+| 未提交 | `docs/F_TestData.md`（13 场景测试数据集） | 文档 |
+
+**检验结果**：双架构 7 套件 214 场景 / 2888 断言 + 406 冒烟项全通过；四配置 0 警告 0 错误；对照脚本 8 场景基线 vs 当前均等不劣于基线。
+
+**工作区说明**：`docs/Reliability_TestReport.md` 当前工作区为空（-120 行，相对已提交版本）；`docs/Dispatcher_TestReport.md` 当前不存在。两者均为文档，不影响代码与测试；如需恢复/重建请告知。
