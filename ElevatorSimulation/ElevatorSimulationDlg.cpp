@@ -113,6 +113,21 @@ namespace
 		result.ReleaseBuffer(length);
 		return result;
 	}
+
+	void SetTextIfChanged(CWnd& control, const CString& text)
+	{
+		CString currentText;
+		control.GetWindowTextW(currentText);
+		if (currentText != text)
+			control.SetWindowTextW(text);
+	}
+
+	void SetDialogItemTextIfChanged(CWnd& dialog, int controlId, const CString& text)
+	{
+		CWnd* control = dialog.GetDlgItem(controlId);
+		ASSERT(control != nullptr);
+		SetTextIfChanged(*control, text);
+	}
 }
 
 
@@ -655,7 +670,7 @@ void CElevatorSimulationDlg::UpdateSpeedDisplay(double speed)
 {
 	CString text;
 	text.Format(L"%g 倍", speed);
-	m_headerSpeed.SetWindowTextW(text);
+	SetTextIfChanged(m_headerSpeed, text);
 }
 
 void CElevatorSimulationDlg::OnSize(UINT nType, int cx, int cy)
@@ -895,7 +910,7 @@ void CElevatorSimulationDlg::UpdateElevatorDetails(
 	const int selectedElevatorId = m_buildingView.GetSelectedElevatorId();
 	if (!snapshot || selectedElevatorId == InvalidElevatorId)
 	{
-		m_elevatorDetailTitle.SetWindowTextW(L"电梯详情：未选择");
+		SetTextIfChanged(m_elevatorDetailTitle, L"电梯详情：未选择");
 		m_elevatorDetailBody.SetWindowTextW(L"请在中央视图选择一台电梯");
 		return;
 	}
@@ -907,14 +922,14 @@ void CElevatorSimulationDlg::UpdateElevatorDetails(
 		});
 	if (elevator == snapshot->elevators.end())
 	{
-		m_elevatorDetailTitle.SetWindowTextW(L"电梯详情：未选择");
+		SetTextIfChanged(m_elevatorDetailTitle, L"电梯详情：未选择");
 		m_elevatorDetailBody.SetWindowTextW(L"请在中央视图选择一台电梯");
 		return;
 	}
 
 	CString title;
 	title.Format(L"电梯详情：E%d", elevator->id + 1);
-	m_elevatorDetailTitle.SetWindowTextW(title);
+	SetTextIfChanged(m_elevatorDetailTitle, title);
 	CString details;
 	CString repositionTarget = L"--";
 	if (elevator->repositionTargetFloor != InvalidFloor)
@@ -1207,7 +1222,7 @@ void CElevatorSimulationDlg::RefreshSimulationView(bool forceBuildingRefresh)
 	const auto snapshot = m_simulationWorker ? m_simulationWorker->GetLatestSnapshot() : nullptr;
 	if (!snapshot)
 	{
-		SetDlgItemTextW(IDC_SIMULATION_STATE, L"正在初始化");
+		SetDialogItemTextIfChanged(*this, IDC_SIMULATION_STATE, L"正在初始化");
 		RefreshBuildingView(snapshot, forceBuildingRefresh);
 		UpdateElevatorDetails(snapshot);
 		UpdateControlStates(snapshot);
@@ -1220,10 +1235,10 @@ void CElevatorSimulationDlg::RefreshSimulationView(bool forceBuildingRefresh)
 	if (!snapshot->lastError.empty() &&
 		(!snapshot->workerActive || snapshot->state == SimulationState::Uninitialized))
 		stateText = L"错误：" + Utf8ToCString(snapshot->lastError);
-	SetDlgItemTextW(IDC_SIMULATION_STATE, stateText);
+	SetDialogItemTextIfChanged(*this, IDC_SIMULATION_STATE, stateText);
 	CString modelTime;
 	modelTime.Format(L"%.1f / %.1f 秒", snapshot->currentTime, config.simulationDuration);
-	SetDlgItemTextW(IDC_MODEL_TIME, modelTime);
+	SetDialogItemTextIfChanged(*this, IDC_MODEL_TIME, modelTime);
 	CString trafficText;
 	CString dashboardTrafficText;
 	if (snapshot->trafficScenario == TrafficScenario::OfficeDay)
@@ -1241,7 +1256,7 @@ void CElevatorSimulationDlg::RefreshSimulationView(bool forceBuildingRefresh)
 		dashboardTrafficText.Format(L"固定模式 · %s",
 			TrafficPatternText(snapshot->activeTrafficPattern));
 	}
-	m_headerTraffic.SetWindowTextW(trafficText);
+	SetTextIfChanged(m_headerTraffic, trafficText);
 	m_elevatorDetailBody.SetTrafficText(dashboardTrafficText);
 	if (snapshot->state != SimulationState::Ready &&
 		snapshot->state != SimulationState::Uninitialized)
@@ -1252,7 +1267,7 @@ void CElevatorSimulationDlg::RefreshSimulationView(bool forceBuildingRefresh)
 	{
 		CString speedText;
 		GetDlgItemTextW(IDC_EDIT_SPEED, speedText);
-		m_headerSpeed.SetWindowTextW(speedText + L" 倍");
+		SetTextIfChanged(m_headerSpeed, speedText + L" 倍");
 	}
 	else
 	{
@@ -1312,7 +1327,7 @@ void CElevatorSimulationDlg::RefreshSimulationView(bool forceBuildingRefresh)
 	statisticValues[4].Format(L"%.2f 秒", statistics.averageWaitingTime);
 	statisticValues[5].Format(L"%.2f 秒", statistics.maxWaitingTime);
 	for (std::size_t index = 0; index < m_statValues.size(); ++index)
-		m_statValues[index].SetWindowTextW(statisticValues[index]);
+		SetTextIfChanged(m_statValues[index], statisticValues[index]);
 	UpdateControlStates(snapshot);
 }
 
