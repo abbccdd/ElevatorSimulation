@@ -50,14 +50,6 @@ protected:
 
 class HallCallDashboardList : public CListCtrl
 {
-public:
-    void SetTrafficText(const CString& text)
-    {
-        if (m_trafficText == text) return;
-        m_trafficText = text;
-        Invalidate(FALSE);
-    }
-
 protected:
     LRESULT WindowProc(UINT message, WPARAM wParam, LPARAM lParam) override
     {
@@ -71,13 +63,11 @@ protected:
     }
 
 private:
-    CString m_trafficText = L"--";
-
     void DrawSummary(CDC& dc)
     {
         CRect client;
         GetClientRect(&client);
-        if (client.Width() < 180 || client.Height() < 220) return;
+        if (client.Width() < 180 || client.Height() < 72) return;
 
         int contentTop = 10;
         if (CHeaderCtrl* header = GetHeaderCtrl())
@@ -101,14 +91,14 @@ private:
         }
 
         const int clientBottom = static_cast<int>(client.bottom);
-        if (clientBottom - contentTop < 170) return;
+        if (clientBottom - contentTop < 44) return;
 
-        int cardBottom = contentTop + 198;
-        if (cardBottom > clientBottom - 12) cardBottom = clientBottom - 12;
+        int cardBottom = contentTop + 52;
+        if (cardBottom > clientBottom - 6) cardBottom = clientBottom - 6;
         CRect card;
-        card.SetRect(static_cast<int>(client.left) + 10, contentTop,
-            static_cast<int>(client.right) - 10, cardBottom);
-        if (card.Height() < 160) return;
+        card.SetRect(static_cast<int>(client.left) + 6, contentTop,
+            static_cast<int>(client.right) - 6, cardBottom);
+        if (card.Height() < 38) return;
 
         dc.FillSolidRect(card, RGB(248, 250, 252));
         CPen borderPen(PS_SOLID, 1, RGB(210, 216, 224));
@@ -117,13 +107,6 @@ private:
         dc.SelectObject(oldPen);
         dc.SetBkMode(TRANSPARENT);
         if (GetFont() != nullptr) dc.SelectObject(GetFont());
-
-        CRect titleRect = card;
-        titleRect.DeflateRect(12, 8, 12, 0);
-        titleRect.bottom = titleRect.top + 24;
-        dc.SetTextColor(RGB(35, 42, 52));
-        dc.DrawTextW(L"外呼概览", titleRect,
-            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
         std::size_t totalWaiting = 0;
         int assigned = 0;
@@ -135,14 +118,13 @@ private:
         }
         const int unassigned = itemCount - assigned;
 
-        const int bodyTop = static_cast<int>(titleRect.bottom) + 8;
         const int half = card.Width() / 2;
         CRect left;
-        left.SetRect(static_cast<int>(card.left) + 12, bodyTop,
-            static_cast<int>(card.left) + half - 4, bodyTop + 62);
+        left.SetRect(static_cast<int>(card.left) + 10, static_cast<int>(card.top) + 5,
+            static_cast<int>(card.left) + half - 4, static_cast<int>(card.bottom) - 4);
         CRect right;
-        right.SetRect(static_cast<int>(card.left) + half + 4, bodyTop,
-            static_cast<int>(card.right) - 12, bodyTop + 62);
+        right.SetRect(static_cast<int>(card.left) + half + 4, static_cast<int>(card.top) + 5,
+            static_cast<int>(card.right) - 10, static_cast<int>(card.bottom) - 4);
 
         CString leftText;
         leftText.Format(L"当前外呼  %d\r\n等待乘客  %zu", itemCount, totalWaiting);
@@ -151,22 +133,6 @@ private:
         dc.SetTextColor(RGB(58, 66, 77));
         dc.DrawTextW(leftText, left, DT_LEFT | DT_TOP | DT_NOPREFIX);
         dc.DrawTextW(rightText, right, DT_LEFT | DT_TOP | DT_NOPREFIX);
-
-        CRect trafficRect;
-        trafficRect.SetRect(static_cast<int>(card.left) + 12, bodyTop + 68,
-            static_cast<int>(card.right) - 12, bodyTop + 94);
-        CString trafficText;
-        trafficText.Format(L"当前客流：%s", m_trafficText.GetString());
-        dc.SetTextColor(RGB(45, 83, 128));
-        dc.DrawTextW(trafficText, trafficRect,
-            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-
-        CRect hintRect;
-        hintRect.SetRect(static_cast<int>(card.left) + 12, bodyTop + 100,
-            static_cast<int>(card.right) - 12, static_cast<int>(card.bottom) - 8);
-        dc.SetTextColor(RGB(112, 120, 130));
-        dc.DrawTextW(L"提示：点击任一外呼，可查看预计到达时间、调度成本及当前归属说明。",
-            hintRect, DT_LEFT | DT_TOP | DT_WORDBREAK | DT_NOPREFIX);
     }
 };
 

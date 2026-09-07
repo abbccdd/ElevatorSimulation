@@ -513,8 +513,8 @@ void CElevatorSimulationDlg::RelayoutUI()
 			const int availableHeight = innerBottom - innerTop;
 			const int sectionTitleHeight = 22;
 			const int sectionGap = 6;
-			const int hallListHeight = availableHeight * 32 / 100;
-			const int detailBodyHeight = availableHeight * 27 / 100;
+			const int hallListHeight = (std::clamp)(availableHeight * 20 / 100, 120, 150);
+			const int detailBodyHeight = availableHeight * 29 / 100;
 			const int observationSummaryHeight = 42;
 
 			int y = innerTop;
@@ -1228,7 +1228,6 @@ void CElevatorSimulationDlg::RefreshSimulationView(bool forceBuildingRefresh)
 			TrafficPatternText(snapshot->activeTrafficPattern));
 	}
 	m_headerTraffic.SetWindowTextW(trafficText);
-	m_hallCallList.SetTrafficText(dashboardTrafficText);
 	m_elevatorDetailBody.SetTrafficText(dashboardTrafficText);
 	if (snapshot->state != SimulationState::Ready &&
 		snapshot->state != SimulationState::Uninitialized)
