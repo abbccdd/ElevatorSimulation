@@ -374,6 +374,9 @@ void CElevatorSimulationDlg::CreateUIFramework()
 	m_pageTabs.InsertItem(2, L"算法观察");
 	m_pageTabs.SetCurSel(0);
 	m_pageTabs.SetFont(&m_pageTabFont);
+	m_elevatorStateLegend.Create(L"", WS_CHILD | WS_VISIBLE, CRect(), this,
+		IDC_ELEVATOR_STATE_LEGEND);
+	m_elevatorStateLegend.SetFont(GetFont());
 	m_pagePlaceholder.Create(L"", WS_CHILD | WS_BORDER | SS_CENTER | SS_CENTERIMAGE,
 		CRect(), this, IDC_PAGE_PLACEHOLDER);
 	m_statisticsTrendView.Create(this, IDC_STATISTICS_TREND_VIEW);
@@ -575,7 +578,10 @@ void CElevatorSimulationDlg::RelayoutUI()
 		}
 	}
 
-	place(m_pageTabs, centerX, mainBottom + gap, centerWidth, tabsHeight);
+	const int pageTabsWidth = (std::min)(320, centerWidth);
+	place(m_pageTabs, centerX, mainBottom + gap, pageTabsWidth, tabsHeight);
+	place(m_elevatorStateLegend, centerX + pageTabsWidth + gap, mainBottom + gap,
+		(std::max)(0, centerWidth - pageTabsWidth - gap), tabsHeight);
 	const int statsY = mainBottom + gap + tabsHeight + gap;
 	const int statGap = 6;
 	const int statWidth = (centerWidth - statGap * 5) / 6;
@@ -615,7 +621,8 @@ void CElevatorSimulationDlg::UpdateTabPageVisibility()
 	const bool realTimePage = page == 0;
 	const int realTimeCommand = realTimePage ? SW_SHOW : SW_HIDE;
 	for (CWnd* control : { static_cast<CWnd*>(&m_mainPanel), static_cast<CWnd*>(&m_rightPanel),
-		static_cast<CWnd*>(&m_panelToggle), static_cast<CWnd*>(&m_buildingView) })
+		static_cast<CWnd*>(&m_panelToggle), static_cast<CWnd*>(&m_buildingView),
+		static_cast<CWnd*>(&m_elevatorStateLegend) })
 	{
 		control->ShowWindow(realTimeCommand);
 	}

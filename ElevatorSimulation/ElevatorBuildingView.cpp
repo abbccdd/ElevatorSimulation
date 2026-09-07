@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "ElevatorBuildingView.h"
+#include "ElevatorStatusPalette.h"
 
 #include <algorithm>
 #include <cmath>
@@ -490,21 +491,24 @@ void ElevatorBuildingView::DrawDetailed(CDC& dc, const CRect& content,
 			(std::min)(carTop, static_cast<int>(plot.bottom) - carHeight));
 		CRect car(centerX - carWidth / 2, carTop,
 			centerX + carWidth / 2, carTop + carHeight);
-		dc.FillSolidRect(car, selected ? AccentColor : AccentFillColor);
-		dc.Draw3dRect(car, AccentColor, AccentColor);
+		const auto statusColors = ElevatorStatusPalette::Resolve(elevator);
+		dc.FillSolidRect(car, statusColors.fill);
+		dc.Draw3dRect(car, statusColors.border, statusColors.border);
 		CString carText;
 		const wchar_t* movementText = DirectionText(elevator.direction);
-		if (selected && elevator.state == ElevatorState::Boarding)
+		if (elevator.state == ElevatorState::Boarding)
 			movementText = L"上客";
-		else if (selected && elevator.state == ElevatorState::Alighting)
+		else if (elevator.state == ElevatorState::Alighting)
 			movementText = L"下客";
+		else if (elevator.state == ElevatorState::Stopped)
+			movementText = L"停靠";
 		if (largeScaleMode && !selected)
 			carText = movementText;
 		else
 			carText.Format(L"%d 层 %s\n%d/%d", elevator.currentFloor,
 				movementText, elevator.passengerCount, elevator.capacity);
 		CRect carTextRect = car;
-		dc.SetTextColor(selected ? SurfaceColor : TextColor);
+		dc.SetTextColor(statusColors.text);
 		dc.DrawText(carText, carTextRect, DT_CENTER | DT_VCENTER);
 	}
 	dc.SetTextColor(TextColor);
@@ -574,7 +578,9 @@ void ElevatorBuildingView::DrawOverview(CDC& dc, const CRect& content)
 			const bool selected = elevator.id == m_selectedElevatorId;
 			CRect marker(markerX - (selected ? 5 : 3), markerY - (selected ? 6 : 4),
 				markerX + (selected ? 6 : 4), markerY + (selected ? 7 : 5));
-			dc.FillSolidRect(marker, selected ? ActivityColor : AccentColor);
+			const auto statusColors = ElevatorStatusPalette::Resolve(elevator);
+			dc.FillSolidRect(marker, statusColors.fill);
+			dc.Draw3dRect(marker, statusColors.border, statusColors.border);
 		}
 	}
 	dc.SetTextColor(TextColor);

@@ -107,6 +107,7 @@ private:
 	StatisticsTrendView m_statisticsTrendView;
 	FloorTrafficHeatmapView m_floorTrafficHeatmapView;
 	CTabCtrl m_pageTabs;
+	ElevatorStateLegend m_elevatorStateLegend;
 	DashboardRightTabs m_rightTabs;
 	CStatic m_rightHallCallTitle;
 	CStatic m_rightAlgorithmTitle;

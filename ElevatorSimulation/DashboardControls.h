@@ -1,9 +1,11 @@
 #pragma once
 
+#include "ElevatorStatusPalette.h"
 #include "Resource.h"
 
 #include <afxcmn.h>
 #include <afxwin.h>
+#include <algorithm>
 #include <cstddef>
 #include <cwchar>
 
@@ -131,6 +133,80 @@ private:
 
 class DashboardRightTabs : public CTabCtrl
 {
+};
+
+class ElevatorStateLegend : public CStatic
+{
+protected:
+    LRESULT WindowProc(UINT message, WPARAM wParam, LPARAM lParam) override
+    {
+        if (message == WM_ERASEBKGND) return TRUE;
+        if (message != WM_PAINT)
+            return CStatic::WindowProc(message, wParam, lParam);
+
+        CPaintDC paintDc(this);
+        CRect client;
+        GetClientRect(&client);
+        if (client.IsRectEmpty()) return 0;
+
+        CDC dc;
+        dc.CreateCompatibleDC(&paintDc);
+        CBitmap bitmap;
+        bitmap.CreateCompatibleBitmap(&paintDc, client.Width(), client.Height());
+        CBitmap* oldBitmap = dc.SelectObject(&bitmap);
+        dc.FillSolidRect(client, ::GetSysColor(COLOR_3DFACE));
+        dc.SetBkMode(TRANSPARENT);
+        dc.SetTextColor(RGB(45, 52, 62));
+        if (GetFont() != nullptr) dc.SelectObject(GetFont());
+
+        static constexpr const wchar_t* Labels[] = {
+            L"上行", L"下行", L"服务", L"满载", L"空闲"
+        };
+        static constexpr COLORREF Colors[] = {
+            ElevatorStatusPalette::MovingUpFill,
+            ElevatorStatusPalette::MovingDownFill,
+            ElevatorStatusPalette::ServicingFill,
+            ElevatorStatusPalette::FullFill,
+            ElevatorStatusPalette::IdleFill
+        };
+        constexpr int ItemCount = static_cast<int>(_countof(Labels));
+        const int markerSize = (std::max)(8, (std::min)(11, client.Height() / 3));
+        const int markerTextGap = 4;
+        int itemGap = 10;
+        int itemWidths[ItemCount]{};
+        int totalWidth = 0;
+        for (int index = 0; index < ItemCount; ++index)
+        {
+            itemWidths[index] = markerSize + markerTextGap + dc.GetTextExtent(Labels[index]).cx;
+            totalWidth += itemWidths[index];
+        }
+        totalWidth += itemGap * (ItemCount - 1);
+        if (totalWidth > client.Width())
+        {
+            itemGap = 4;
+            totalWidth = itemGap * (ItemCount - 1);
+            for (int width : itemWidths) totalWidth += width;
+        }
+
+        int x = client.left + (std::max)(0, (client.Width() - totalWidth) / 2);
+        const int markerTop = client.top + (client.Height() - markerSize) / 2;
+        for (int index = 0; index < ItemCount; ++index)
+        {
+            CRect marker(x, markerTop, x + markerSize, markerTop + markerSize);
+            dc.FillSolidRect(marker, Colors[index]);
+            dc.Draw3dRect(marker, Colors[index], Colors[index]);
+            x += markerSize + markerTextGap;
+            CRect labelRect(x, client.top, x + itemWidths[index] - markerSize - markerTextGap,
+                client.bottom);
+            dc.DrawTextW(Labels[index], labelRect,
+                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            x += labelRect.Width() + itemGap;
+        }
+
+        paintDc.BitBlt(0, 0, client.Width(), client.Height(), &dc, 0, 0, SRCCOPY);
+        dc.SelectObject(oldBitmap);
+        return 0;
+    }
 };
 
 class ElevatorDetailDashboard : public CStatic
