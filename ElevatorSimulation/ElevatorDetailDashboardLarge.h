@@ -22,21 +22,6 @@ public:
 protected:
     LRESULT WindowProc(UINT message, WPARAM wParam, LPARAM lParam) override
     {
-        if (message == WM_WINDOWPOSCHANGING)
-        {
-            WINDOWPOS* position = reinterpret_cast<WINDOWPOS*>(lParam);
-            if (position != nullptr && (position->flags & SWP_NOSIZE) == 0)
-            {
-                if (CWnd* parent = GetParent())
-                {
-                    CRect parentClient;
-                    parent->GetClientRect(&parentClient);
-                    const int available = static_cast<int>(parentClient.bottom) - position->y - 20;
-                    if (available > position->cy) position->cy = available;
-                }
-            }
-            return CStatic::WindowProc(message, wParam, lParam);
-        }
         if (message == WM_SETTEXT)
         {
             const wchar_t* incoming = reinterpret_cast<const wchar_t*>(lParam);
@@ -181,6 +166,46 @@ private:
         const CString state = ExtractField(m_sourceText, L"状态：");
         const CString load = ExtractField(m_sourceText, L"载客：");
         const CString repositionTarget = ExtractField(m_sourceText, L"再平衡目标：");
+
+        if (client.Height() < 360)
+        {
+            m_backRect.SetRectEmpty();
+            const int compactLeft = static_cast<int>(client.left) + 4;
+            const int compactRight = static_cast<int>(client.right) - 4;
+            const int compactTop = static_cast<int>(client.top) + 4;
+            const int compactGap = 5;
+            const int footerHeight = 28;
+            const int gridBottom = static_cast<int>(client.bottom) - footerHeight - compactGap - 4;
+            const int cellWidth = (compactRight - compactLeft - compactGap) / 2;
+            const int cellHeight = (gridBottom - compactTop - compactGap) / 2;
+            CFont* oldFont = dc.SelectObject(&m_bodyFont);
+
+            DrawMetric(dc, CRect(compactLeft, compactTop,
+                compactLeft + cellWidth, compactTop + cellHeight), L"当前楼层", floor);
+            DrawMetric(dc, CRect(compactLeft + cellWidth + compactGap, compactTop,
+                compactRight, compactTop + cellHeight), L"运行方向", direction);
+            DrawMetric(dc, CRect(compactLeft, compactTop + cellHeight + compactGap,
+                compactLeft + cellWidth, gridBottom), L"运行状态", state);
+            DrawMetric(dc, CRect(compactLeft + cellWidth + compactGap,
+                compactTop + cellHeight + compactGap, compactRight, gridBottom),
+                L"载客情况", load);
+
+            CRect footer(compactLeft, gridBottom + compactGap,
+                compactRight, static_cast<int>(client.bottom) - 4);
+            dc.FillSolidRect(footer, RGB(239, 245, 253));
+            DrawBorder(dc, footer, RGB(202, 214, 230));
+            CString footerText;
+            footerText.Format(L"再平衡目标：%s", repositionTarget.GetString());
+            dc.SelectObject(&m_bodyFont);
+            dc.SetTextColor(RGB(43, 82, 132));
+            dc.DrawTextW(footerText, footer,
+                DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+
+            dc.SelectObject(oldFont);
+            paintDc.BitBlt(0, 0, client.Width(), client.Height(), &dc, 0, 0, SRCCOPY);
+            dc.SelectObject(oldBitmap);
+            return;
+        }
 
         const int left = static_cast<int>(client.left) + 6;
         const int right = static_cast<int>(client.right) - 6;

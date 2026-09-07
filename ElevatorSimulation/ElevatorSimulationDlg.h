@@ -107,6 +107,8 @@ private:
 	FloorTrafficHeatmapView m_floorTrafficHeatmapView;
 	CTabCtrl m_pageTabs;
 	DashboardRightTabs m_rightTabs;
+	CStatic m_rightHallCallTitle;
+	CStatic m_rightAlgorithmTitle;
 	CStatic m_pagePlaceholder;
 	CStatic m_algorithmPageSummary;
 	CListCtrl m_algorithmCandidateList;
