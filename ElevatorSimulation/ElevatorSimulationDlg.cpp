@@ -355,6 +355,7 @@ void CElevatorSimulationDlg::CreateUIFramework()
 	m_elevatorDetailTitle.SetFont(&m_sectionFont);
 	m_elevatorDetailBody.Create(L"请在中央视图选择一台电梯",
 		WS_CHILD | WS_VISIBLE | SS_LEFT, CRect(), this, IDC_RIGHT_ELEVATOR_DETAILS);
+	m_elevatorDetailBody.SetCompactMode(true);
 	m_algorithmPlaceholder.Create(L"请选择外呼请求，或先选择一台电梯自动关联其外呼",
 		WS_CHILD | WS_VISIBLE | WS_BORDER | SS_LEFT,
 		CRect(), this, IDC_RIGHT_ALGORITHM_PLACEHOLDER);

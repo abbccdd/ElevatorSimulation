@@ -12,6 +12,14 @@
 class ElevatorDetailDashboardLarge : public CStatic
 {
 public:
+    void SetCompactMode(bool compact)
+    {
+        if (m_compactMode == compact) return;
+        m_compactMode = compact;
+        m_backRect.SetRectEmpty();
+        Invalidate(FALSE);
+    }
+
     void SetTrafficText(const CString& text)
     {
         if (m_trafficText == text) return;
@@ -89,6 +97,7 @@ private:
     CFont m_valueFont;
     CFont m_bodyFont;
     bool m_fontsReady = false;
+    bool m_compactMode = false;
 
     static CString ExtractField(const CString& source, const wchar_t* label)
     {
@@ -167,7 +176,7 @@ private:
         const CString load = ExtractField(m_sourceText, L"载客：");
         const CString repositionTarget = ExtractField(m_sourceText, L"再平衡目标：");
 
-        if (client.Height() < 360)
+        if (m_compactMode || client.Height() < 360)
         {
             m_backRect.SetRectEmpty();
             const int compactLeft = static_cast<int>(client.left) + 4;
