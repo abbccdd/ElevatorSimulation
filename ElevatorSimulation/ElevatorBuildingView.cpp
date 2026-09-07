@@ -484,8 +484,8 @@ void ElevatorBuildingView::DrawDetailed(CDC& dc, const CRect& content,
 			continue;
 		}
 
-		const int carWidth = (std::max)(26, (std::min)(64, shaftRight - shaftLeft - 8));
-		const int carHeight = 42;
+		const int carWidth = (std::max)(32, (std::min)(74, shaftRight - shaftLeft - 4));
+		const int carHeight = 48;
 		int carTop = FloorY(visualFloor, plot) - carHeight / 2;
 		carTop = (std::max)(static_cast<int>(plot.top),
 			(std::min)(carTop, static_cast<int>(plot.bottom) - carHeight));
