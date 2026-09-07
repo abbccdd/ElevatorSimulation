@@ -91,14 +91,14 @@ private:
         }
 
         const int clientBottom = static_cast<int>(client.bottom);
-        if (clientBottom - contentTop < 44) return;
+        if (clientBottom - contentTop < 28) return;
 
-        int cardBottom = contentTop + 52;
-        if (cardBottom > clientBottom - 6) cardBottom = clientBottom - 6;
+        int cardBottom = contentTop + 32;
+        if (cardBottom > clientBottom - 4) cardBottom = clientBottom - 4;
         CRect card;
-        card.SetRect(static_cast<int>(client.left) + 6, contentTop,
-            static_cast<int>(client.right) - 6, cardBottom);
-        if (card.Height() < 38) return;
+        card.SetRect(static_cast<int>(client.left) + 4, contentTop,
+            static_cast<int>(client.right) - 4, cardBottom);
+        if (card.Height() < 24) return;
 
         dc.FillSolidRect(card, RGB(248, 250, 252));
         CPen borderPen(PS_SOLID, 1, RGB(210, 216, 224));
@@ -118,21 +118,14 @@ private:
         }
         const int unassigned = itemCount - assigned;
 
-        const int half = card.Width() / 2;
-        CRect left;
-        left.SetRect(static_cast<int>(card.left) + 10, static_cast<int>(card.top) + 5,
-            static_cast<int>(card.left) + half - 4, static_cast<int>(card.bottom) - 4);
-        CRect right;
-        right.SetRect(static_cast<int>(card.left) + half + 4, static_cast<int>(card.top) + 5,
-            static_cast<int>(card.right) - 10, static_cast<int>(card.bottom) - 4);
-
-        CString leftText;
-        leftText.Format(L"当前外呼  %d\r\n等待乘客  %zu", itemCount, totalWaiting);
-        CString rightText;
-        rightText.Format(L"已分配  %d\r\n未分配  %d", assigned, unassigned);
+        CString summary;
+        summary.Format(L"外呼 %d    等待 %zu    已分配 %d    未分配 %d",
+            itemCount, totalWaiting, assigned, unassigned);
+        CRect textRect = card;
+        textRect.DeflateRect(6, 1);
         dc.SetTextColor(RGB(58, 66, 77));
-        dc.DrawTextW(leftText, left, DT_LEFT | DT_TOP | DT_NOPREFIX);
-        dc.DrawTextW(rightText, right, DT_LEFT | DT_TOP | DT_NOPREFIX);
+        dc.DrawTextW(summary, textRect,
+            DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
     }
 };
 
