@@ -22,7 +22,7 @@ namespace
 		{
 		case Direction::Up: return L"↑";
 		case Direction::Down: return L"↓";
-		default: return L"Idle";
+		default: return L"空闲";
 		}
 	}
 }
@@ -134,7 +134,7 @@ void ElevatorBuildingView::DrawView(CDC& dc, const CRect& client)
 	{
 		CRect messageRect = client;
 		dc.SetTextColor(MutedTextColor);
-		dc.DrawText(L"等待仿真 Snapshot…", messageRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+		dc.DrawText(L"等待仿真快照……", messageRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 		return;
 	}
 
@@ -311,7 +311,7 @@ void ElevatorBuildingView::DrawFloorScale(CDC& dc, const CRect& plot) const
 
 		if (!major && !active) continue;
 		CString label;
-		label.Format(L"%dF", floor);
+		label.Format(L"%d 层", floor);
 		if (upCount > 0)
 		{
 			CString count;
@@ -342,7 +342,7 @@ void ElevatorBuildingView::DrawZoomControls(CDC& dc, const CRect& content)
 	const bool fit = m_visibleFloorMin == 1 &&
 		m_visibleFloorMax == m_snapshot->config.floorCount;
 	const CRect buttons[] = { m_zoomFitHitRect, m_zoomInHitRect, m_zoomOutHitRect };
-	const wchar_t* labels[] = { L"全楼 / Fit", L"放大 +", L"缩小 -" };
+	const wchar_t* labels[] = { L"全楼", L"放大 +", L"缩小 -" };
 	for (int index = 0; index < 3; ++index)
 	{
 		const bool active = index == 0 && fit;
@@ -359,7 +359,7 @@ void ElevatorBuildingView::DrawZoomControls(CDC& dc, const CRect& content)
 CString ElevatorBuildingView::VisibleFloorText() const
 {
 	CString text;
-	text.Format(L"%dF-%dF", m_visibleFloorMin, m_visibleFloorMax);
+	text.Format(L"第 %d–%d 层", m_visibleFloorMin, m_visibleFloorMax);
 	return text;
 }
 
@@ -495,13 +495,13 @@ void ElevatorBuildingView::DrawDetailed(CDC& dc, const CRect& content,
 		CString carText;
 		const wchar_t* movementText = DirectionText(elevator.direction);
 		if (selected && elevator.state == ElevatorState::Boarding)
-			movementText = L"Boarding";
+			movementText = L"上客";
 		else if (selected && elevator.state == ElevatorState::Alighting)
-			movementText = L"Alighting";
+			movementText = L"下客";
 		if (largeScaleMode && !selected)
 			carText = movementText;
 		else
-			carText.Format(L"%dF %s\n%d/%d", elevator.currentFloor,
+			carText.Format(L"%d 层 %s\n%d/%d", elevator.currentFloor,
 				movementText, elevator.passengerCount, elevator.capacity);
 		CRect carTextRect = car;
 		dc.SetTextColor(selected ? SurfaceColor : TextColor);
@@ -513,10 +513,7 @@ void ElevatorBuildingView::DrawDetailed(CDC& dc, const CRect& content,
 CString ElevatorBuildingView::GroupName(int groupIndex) const
 {
 	CString name;
-	if (groupIndex < 26)
-		name.Format(L"%c组", L'A' + groupIndex);
-	else
-		name.Format(L"第%d组", groupIndex + 1);
+	name.Format(L"第%d组", groupIndex + 1);
 	return name;
 }
 

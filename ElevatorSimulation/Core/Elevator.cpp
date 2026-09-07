@@ -9,7 +9,7 @@ Elevator::Elevator(int id, int initialFloor, int capacity)
     : m_id(id), m_currentFloor(initialFloor), m_capacity(capacity)
 {
     if (id < 0 || initialFloor < 1 || capacity <= 0)
-        throw std::invalid_argument("Invalid elevator data");
+        throw std::invalid_argument("电梯数据无效");
 }
 
 Elevator::Elevator(int id, int initialFloor, const SimulationConfig& config)
@@ -18,7 +18,7 @@ Elevator::Elevator(int id, int initialFloor, const SimulationConfig& config)
     if (config.floorCount < 2 || initialFloor > config.floorCount ||
         !std::isfinite(config.moveTimePerFloor) || config.moveTimePerFloor <= 0.0 ||
         !std::isfinite(config.personTime) || config.personTime <= 0.0)
-        throw std::invalid_argument("Invalid elevator configuration");
+        throw std::invalid_argument("电梯配置无效");
     m_floorCount = config.floorCount;
     m_moveTimePerFloor = config.moveTimePerFloor;
     m_personTime = config.personTime;

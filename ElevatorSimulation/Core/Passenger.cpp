@@ -11,7 +11,7 @@ Passenger::Passenger(PassengerId id, int startFloor, int targetFloor, double req
     if (id < 0 || startFloor < 1 || targetFloor < 1 || startFloor == targetFloor ||
         !std::isfinite(requestTime) || requestTime < 0.0)
     {
-        throw std::invalid_argument("Invalid passenger data");
+        throw std::invalid_argument("乘客数据无效");
     }
 }
 

@@ -84,7 +84,7 @@ void StatisticsTrendView::OnPaint()
 	const int rowHeight = (contentHeight - gap) / 2;
 
 	CString heading;
-	heading.Format(L"统计分析    模型时间 %.1f s    采样点 %zu",
+	heading.Format(L"统计分析    模型时间 %.1f 秒    采样点 %zu",
 		m_points.back().time, m_points.size());
 	bufferDc.SetTextColor(RGB(35, 43, 55));
 	CRect headingRect(outer + 2, outer, client.right - outer, outer + 28);
@@ -99,7 +99,7 @@ void StatisticsTrendView::OnPaint()
 		client.right - outer, client.bottom - outer);
 
 	DrawChart(bufferDc, topLeft, L"等待人数趋势", RGB(194, 70, 68), WaitingValue, true);
-	DrawChart(bufferDc, topRight, L"平均等待时间趋势 (s)", RGB(46, 103, 177), AverageWaitValue);
+	DrawChart(bufferDc, topRight, L"平均等待时间趋势（秒）", RGB(46, 103, 177), AverageWaitValue);
 	DrawChart(bufferDc, bottomLeft, L"累计到达人数", RGB(45, 126, 78), ArrivedValue, true);
 	DrawOverview(bufferDc, bottomRight);
 
@@ -164,9 +164,9 @@ void StatisticsTrendView::DrawChart(CDC& dc, const CRect& bounds, const wchar_t*
 
 	const double lastTime = (std::max)(m_points.back().time, 0.5);
 	CRect timeRect(plot.left, plot.bottom + 4, plot.right, bounds.bottom - 2);
-	dc.DrawTextW(L"0 s", timeRect, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
+	dc.DrawTextW(L"0 秒", timeRect, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
 	CString endTimeLabel;
-	endTimeLabel.Format(L"%.1f s", m_points.back().time);
+	endTimeLabel.Format(L"%.1f 秒", m_points.back().time);
 	dc.DrawTextW(endTimeLabel, timeRect, DT_RIGHT | DT_SINGLELINE | DT_NOPREFIX);
 
 	CPen dataPen(PS_SOLID, 2, color);
@@ -231,13 +231,13 @@ void StatisticsTrendView::DrawOverview(CDC& dc, const CRect& bounds) const
 	metrics[1].label = L"累计到达";
 	metrics[1].value.Format(L"%zu 人", latest.arrivedCount);
 	metrics[2].label = L"平均等待";
-	metrics[2].value.Format(L"%.2f s", latest.averageWaitingTime);
+	metrics[2].value.Format(L"%.2f 秒", latest.averageWaitingTime);
 	metrics[3].label = L"峰值等待";
 	metrics[3].value.Format(L"%zu 人", peakWaiting);
 	metrics[4].label = L"峰值平均等待";
-	metrics[4].value.Format(L"%.2f s", peakAverageWait);
+	metrics[4].value.Format(L"%.2f 秒", peakAverageWait);
 	metrics[5].label = L"到达吞吐率";
-	metrics[5].value.Format(L"%.2f 人/s", throughput);
+	metrics[5].value.Format(L"%.2f 人/秒", throughput);
 
 	for (int index = 0; index < 6; ++index)
 	{

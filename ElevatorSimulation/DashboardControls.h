@@ -34,24 +34,11 @@ protected:
         static const wchar_t* Chinese[] = {
             L"总生成", L"等待中", L"乘梯中", L"已到达", L"平均等待", L"最大等待"
         };
-        static const wchar_t* English[] = {
-            L"Generated", L"Waiting", L"Riding", L"Arrived", L"Avg Wait", L"Max Wait"
-        };
-
         const int index = GetDlgCtrlID() - IDC_STAT_TITLE_FIRST;
         if (index >= 0 && index < 6)
         {
-            const int split = static_cast<int>(client.top) + client.Height() / 2;
-            CRect top = client;
-            CRect bottom = client;
-            top.bottom = split + 1;
-            bottom.top = split - 1;
-
             dc.SetTextColor(RGB(45, 52, 62));
-            dc.DrawTextW(Chinese[index], top,
-                DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-            dc.SetTextColor(RGB(105, 112, 122));
-            dc.DrawTextW(English[index], bottom,
+            dc.DrawTextW(Chinese[index], client,
                 DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         }
 
@@ -135,7 +122,7 @@ private:
         titleRect.DeflateRect(12, 8, 12, 0);
         titleRect.bottom = titleRect.top + 24;
         dc.SetTextColor(RGB(35, 42, 52));
-        dc.DrawTextW(L"外呼概览 / Hall Call Summary", titleRect,
+        dc.DrawTextW(L"外呼概览", titleRect,
             DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
         std::size_t totalWaiting = 0;
@@ -178,7 +165,7 @@ private:
         hintRect.SetRect(static_cast<int>(card.left) + 12, bodyTop + 100,
             static_cast<int>(card.right) - 12, static_cast<int>(card.bottom) - 8);
         dc.SetTextColor(RGB(112, 120, 130));
-        dc.DrawTextW(L"提示：点击任一外呼，可查看 ETA / Cost 候选及当前归属说明。",
+        dc.DrawTextW(L"提示：点击任一外呼，可查看预计到达时间、调度成本及当前归属说明。",
             hintRect, DT_LEFT | DT_TOP | DT_WORDBREAK | DT_NOPREFIX);
     }
 };
@@ -319,7 +306,7 @@ private:
         dc.Rectangle(m_backRect);
         dc.SelectObject(oldPen);
         dc.SetTextColor(RGB(48, 89, 145));
-        dc.DrawTextW(L"←  返回 Hall Call / 外呼列表", m_backRect,
+        dc.DrawTextW(L"←  返回外呼列表", m_backRect,
             DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
         CRect sectionTitle;
@@ -328,7 +315,7 @@ private:
             static_cast<int>(client.right) - 4,
             static_cast<int>(m_backRect.bottom) + 40);
         dc.SetTextColor(RGB(35, 42, 52));
-        dc.DrawTextW(L"实时状态 / Live Status", sectionTitle,
+        dc.DrawTextW(L"实时状态", sectionTitle,
             DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
         const int gap = 8;
@@ -353,13 +340,13 @@ private:
         CRect taskText = taskCard;
         taskText.DeflateRect(10, 8, 10, 6);
         CString task;
-        if (state.CompareNoCase(L"Idle") == 0)
+        if (state == L"空闲")
             task = L"当前任务\r\n空闲待命，等待新的群控分配。";
-        else if (state.Find(L"Moving") >= 0)
-            task = L"当前任务\r\n正在执行 LOOK 方向保持运行；新请求不会打断当前楼层间动作。";
-        else if (state.CompareNoCase(L"Boarding") == 0)
+        else if (state == L"上行中" || state == L"下行中")
+            task = L"当前任务\r\n正在按顺向扫描规则保持运行方向；新请求不会打断当前楼层间动作。";
+        else if (state == L"上客中")
             task = L"当前任务\r\n正在执行乘客登梯服务。";
-        else if (state.CompareNoCase(L"Alighting") == 0)
+        else if (state == L"下客中")
             task = L"当前任务\r\n正在执行乘客离梯服务。";
         else
             task = L"当前任务\r\n正在处理当前停站服务。";
@@ -373,7 +360,7 @@ private:
         groupText.DeflateRect(10, 8, 10, 6);
         dc.SetTextColor(RGB(55, 64, 75));
         dc.DrawTextW(
-            L"群控参与\r\n该电梯作为候选参与事件级 ETA / Cost 评分。实际外呼归属还会受到联合调度、动态改派与滞回策略影响。",
+            L"群控参与\r\n该电梯作为候选参与事件级预计到达时间与调度成本评分。实际外呼归属还会受到联合调度、动态改派与滞回策略影响。",
             groupText, DT_LEFT | DT_TOP | DT_WORDBREAK | DT_NOPREFIX);
 
         cardTop = static_cast<int>(groupCard.bottom) + 10;

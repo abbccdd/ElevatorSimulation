@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cwchar>
 #include <limits>
+#include <tuple>
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -38,13 +39,13 @@ namespace
 	};
 
 	constexpr const wchar_t* ParameterLabels[] = {
-		L"楼层数 L", L"电梯数量 N", L"容量 K", L"每层时间 S (s)",
-		L"上下客时间 T (s)", L"客流率 (人/仿真秒)", L"客流场景", L"客流模式",
-		L"总时长 (s)", L"随机种子 seed", L"仿真倍速"
+		L"楼层数", L"电梯数量", L"容量", L"每层时间（秒）",
+		L"上下客时间（秒）", L"客流率（人/仿真秒）", L"客流场景", L"客流模式",
+		L"总时长（秒）", L"随机种子", L"仿真倍速"
 	};
 
 	constexpr const wchar_t* StatisticTitles[] = {
-		L"Generated", L"Waiting", L"Riding", L"Arrived", L"Average Wait", L"Max Wait"
+		L"总生成", L"等待中", L"乘梯中", L"已到达", L"平均等待", L"最大等待"
 	};
 
 	const wchar_t* DirectionText(Direction direction)
@@ -53,7 +54,7 @@ namespace
 		{
 		case Direction::Up: return L"↑";
 		case Direction::Down: return L"↓";
-		default: return L"Idle";
+		default: return L"空闲";
 		}
 	}
 
@@ -61,12 +62,12 @@ namespace
 	{
 		switch (state)
 		{
-		case ElevatorState::MovingUp: return L"MovingUp";
-		case ElevatorState::MovingDown: return L"MovingDown";
-		case ElevatorState::Boarding: return L"Boarding";
-		case ElevatorState::Alighting: return L"Alighting";
-		case ElevatorState::Stopped: return L"Stopped";
-		default: return L"Idle";
+		case ElevatorState::MovingUp: return L"上行中";
+		case ElevatorState::MovingDown: return L"下行中";
+		case ElevatorState::Boarding: return L"上客中";
+		case ElevatorState::Alighting: return L"下客中";
+		case ElevatorState::Stopped: return L"停站中";
+		default: return L"空闲";
 		}
 	}
 
@@ -74,11 +75,11 @@ namespace
 	{
 		switch (state)
 		{
-		case SimulationState::Ready: return L"Ready / 就绪";
-		case SimulationState::Running: return L"Running / 运行中";
-		case SimulationState::Paused: return L"Paused / 已暂停";
-		case SimulationState::Finished: return L"Finished / 已结束";
-		default: return L"Error / 未初始化";
+		case SimulationState::Ready: return L"就绪";
+		case SimulationState::Running: return L"运行中";
+		case SimulationState::Paused: return L"已暂停";
+		case SimulationState::Finished: return L"已结束";
+		default: return L"未初始化";
 		}
 	}
 
@@ -260,7 +261,7 @@ BOOL CElevatorSimulationDlg::OnInitDialog()
 		DispatcherExecutionMode::Parallel);
 	if (SetTimer(SimulationTimerId, SimulationTimerIntervalMs, nullptr) == 0)
 	{
-		AfxMessageBox(L"无法创建 UI 刷新计时器。", MB_ICONERROR);
+		AfxMessageBox(L"无法创建界面刷新计时器。", MB_ICONERROR);
 	}
 	RefreshSimulationView(true);
 
@@ -290,7 +291,7 @@ void CElevatorSimulationDlg::CreateUIFramework()
 	m_headerStateLabel.Create(L"运行状态：", labelStyle, CRect(), this, IDC_HEADER_STATE_LABEL);
 	m_headerTimeLabel.Create(L"模型时间：", labelStyle, CRect(), this, IDC_HEADER_TIME_LABEL);
 	m_headerSpeedLabel.Create(L"仿真倍速：", labelStyle, CRect(), this, IDC_HEADER_SPEED_LABEL);
-	m_headerSpeed.Create(L"x1", labelStyle, CRect(), this, IDC_HEADER_SPEED);
+	m_headerSpeed.Create(L"1 倍", labelStyle, CRect(), this, IDC_HEADER_SPEED);
 	m_headerTraffic.Create(L"场景：固定模式 · 当前模式：均匀随机",
 		labelStyle, CRect(), this, IDC_HEADER_TRAFFIC);
 
@@ -332,7 +333,7 @@ void CElevatorSimulationDlg::CreateUIFramework()
 			ParameterLabelIds[index]);
 	}
 
-	constexpr const wchar_t* SpeedLabels[] = { L"x1", L"x2", L"x5", L"x10" };
+	constexpr const wchar_t* SpeedLabels[] = { L"1 倍", L"2 倍", L"5 倍", L"10 倍" };
 	for (std::size_t index = 0; index < m_speedButtons.size(); ++index)
 	{
 		m_speedButtons[index].Create(SpeedLabels[index],
@@ -342,7 +343,7 @@ void CElevatorSimulationDlg::CreateUIFramework()
 
 	m_rightTabs.Create(WS_CHILD | WS_VISIBLE | WS_TABSTOP | TCS_TABS | TCS_SINGLELINE,
 		CRect(), this, IDC_TAB_RIGHT);
-	m_rightTabs.InsertItem(0, L"Hall Call");
+	m_rightTabs.InsertItem(0, L"外呼请求");
 	m_rightTabs.InsertItem(1, L"电梯详情");
 	m_rightTabs.InsertItem(2, L"算法观察");
 	m_rightTabs.SetCurSel(0);
@@ -351,7 +352,7 @@ void CElevatorSimulationDlg::CreateUIFramework()
 	m_elevatorDetailTitle.SetFont(&m_sectionFont);
 	m_elevatorDetailBody.Create(L"请在中央视图选择一台电梯",
 		WS_CHILD | WS_VISIBLE | SS_LEFT, CRect(), this, IDC_RIGHT_ELEVATOR_DETAILS);
-	m_algorithmPlaceholder.Create(L"请在 Hall Call 页选择一个请求",
+	m_algorithmPlaceholder.Create(L"请选择外呼请求，或先选择一台电梯自动关联其外呼",
 		WS_CHILD | WS_VISIBLE | WS_BORDER | SS_LEFT,
 		CRect(), this, IDC_RIGHT_ALGORITHM_PLACEHOLDER);
 
@@ -367,7 +368,7 @@ void CElevatorSimulationDlg::CreateUIFramework()
 	m_statisticsTrendView.SetFont(GetFont());
 	m_floorTrafficHeatmapView.Create(this, IDC_FLOOR_TRAFFIC_HEATMAP_VIEW);
 	m_floorTrafficHeatmapView.SetFont(GetFont());
-	m_algorithmPageSummary.Create(L"请在实时监控页的 Hall Call 列表中选择一个请求",
+	m_algorithmPageSummary.Create(L"请选择外呼请求，或先选择一台电梯自动关联其外呼",
 		WS_CHILD | WS_BORDER | SS_LEFT | SS_CENTERIMAGE, CRect(), this,
 		IDC_ALGORITHM_PAGE_SUMMARY);
 	m_algorithmCandidateList.Create(WS_CHILD | WS_BORDER | WS_TABSTOP | LVS_REPORT |
@@ -383,7 +384,7 @@ void CElevatorSimulationDlg::CreateUIFramework()
 		m_statTitles[index].Create(StatisticTitles[index],
 			WS_CHILD | WS_VISIBLE | SS_CENTER | SS_CENTERIMAGE, CRect(), this,
 			IDC_STAT_TITLE_FIRST + static_cast<UINT>(index));
-		m_statValues[index].Create(index >= 4 ? L"0.00 s" : L"0",
+		m_statValues[index].Create(index >= 4 ? L"0.00 秒" : L"0",
 			WS_CHILD | WS_VISIBLE | SS_CENTER | SS_CENTERIMAGE, CRect(), this,
 			IDC_STAT_VALUE_FIRST + static_cast<UINT>(index));
 		m_statValues[index].SetFont(&m_statValueFont);
@@ -599,7 +600,7 @@ void CElevatorSimulationDlg::UpdateRightPanelVisibility()
 void CElevatorSimulationDlg::UpdateSpeedDisplay(double speed)
 {
 	CString text;
-	text.Format(L"x%g", speed);
+	text.Format(L"%g 倍", speed);
 	m_headerSpeed.SetWindowTextW(text);
 }
 
@@ -674,8 +675,15 @@ void CElevatorSimulationDlg::OnNMClickHallCallList(NMHDR* pNMHDR, LRESULT* pResu
 	*pResult = 0;
 }
 
-LRESULT CElevatorSimulationDlg::OnElevatorSelectionChanged(WPARAM, LPARAM)
+LRESULT CElevatorSimulationDlg::OnElevatorSelectionChanged(WPARAM wParam, LPARAM)
 {
+	const int selectedElevatorId = static_cast<int>(wParam);
+	const auto snapshot = m_simulationWorker ? m_simulationWorker->GetLatestSnapshot() : nullptr;
+	if (!SelectObservationForElevator(selectedElevatorId, snapshot))
+	{
+		ShowObservationEmptyState(
+			L"当前没有可观察的外呼请求；新外呼出现后将自动显示候选评分");
+	}
 	m_rightTabs.SetCurSel(1);
 	UpdateRightPanelVisibility();
 	RelayoutUI();
@@ -708,9 +716,9 @@ void CElevatorSimulationDlg::InitializeListControls()
 	m_hallCallList.InsertColumn(3, L"归属", LVCFMT_LEFT, 88);
 
 	m_algorithmCandidateList.InsertColumn(0, L"电梯", LVCFMT_LEFT, 90);
-	m_algorithmCandidateList.InsertColumn(1, L"ETA (s)", LVCFMT_RIGHT, 110);
-	m_algorithmCandidateList.InsertColumn(2, L"Cost", LVCFMT_RIGHT, 110);
-	m_algorithmCandidateList.InsertColumn(3, L"feasible", LVCFMT_CENTER, 100);
+	m_algorithmCandidateList.InsertColumn(1, L"预计到达（秒）", LVCFMT_RIGHT, 130);
+	m_algorithmCandidateList.InsertColumn(2, L"调度成本", LVCFMT_RIGHT, 110);
+	m_algorithmCandidateList.InsertColumn(3, L"是否可行", LVCFMT_CENTER, 100);
 	m_algorithmCandidateList.InsertColumn(4, L"预计载客", LVCFMT_RIGHT, 110);
 	m_algorithmCandidateList.InsertColumn(5, L"标记", LVCFMT_LEFT, 220);
 }
@@ -756,11 +764,11 @@ bool CElevatorSimulationDlg::ReadDoubleControl(int controlId, const wchar_t* fie
 
 bool CElevatorSimulationDlg::ReadConfiguration(SimulationConfig& config, std::uint32_t& seed)
 {
-	if (!ReadIntControl(IDC_EDIT_FLOOR_COUNT, L"楼层数 L", config.floorCount) ||
-		!ReadIntControl(IDC_EDIT_ELEVATOR_COUNT, L"电梯数 N", config.elevatorCount) ||
-		!ReadIntControl(IDC_EDIT_CAPACITY, L"容量 K", config.capacity) ||
-		!ReadDoubleControl(IDC_EDIT_MOVE_TIME, L"每层运行时间 S", config.moveTimePerFloor) ||
-		!ReadDoubleControl(IDC_EDIT_PERSON_TIME, L"每人上下客时间 T", config.personTime) ||
+	if (!ReadIntControl(IDC_EDIT_FLOOR_COUNT, L"楼层数", config.floorCount) ||
+		!ReadIntControl(IDC_EDIT_ELEVATOR_COUNT, L"电梯数", config.elevatorCount) ||
+		!ReadIntControl(IDC_EDIT_CAPACITY, L"容量", config.capacity) ||
+		!ReadDoubleControl(IDC_EDIT_MOVE_TIME, L"每层运行时间", config.moveTimePerFloor) ||
+		!ReadDoubleControl(IDC_EDIT_PERSON_TIME, L"每人上下客时间", config.personTime) ||
 		!ReadDoubleControl(IDC_EDIT_DURATION, L"仿真总时长", config.simulationDuration) ||
 		!ReadDoubleControl(IDC_EDIT_PASSENGER_RATE, L"乘客产生率", config.passengerRate) ||
 		!ReadDoubleControl(IDC_EDIT_SPEED, L"仿真倍速", config.simulationSpeed))
@@ -793,7 +801,7 @@ bool CElevatorSimulationDlg::ReadConfiguration(SimulationConfig& config, std::ui
 	if (seedText.IsEmpty() || end == seedText.GetString() || *end != L'\0' || errno == ERANGE ||
 		parsedSeed > (std::numeric_limits<std::uint32_t>::max)())
 	{
-		ShowInputError(L"随机种子 seed 必须是 0~4294967295 的整数。");
+		ShowInputError(L"随机种子必须是 0~4294967295 的整数。");
 		return false;
 	}
 	seed = static_cast<std::uint32_t>(parsedSeed);
@@ -802,7 +810,7 @@ bool CElevatorSimulationDlg::ReadConfiguration(SimulationConfig& config, std::ui
 
 void CElevatorSimulationDlg::ShowInputError(const CString& message)
 {
-	SetDlgItemTextW(IDC_SIMULATION_STATE, L"Error / 参数无效");
+	SetDlgItemTextW(IDC_SIMULATION_STATE, L"参数无效");
 	AfxMessageBox(message, MB_ICONWARNING);
 }
 
@@ -857,8 +865,8 @@ void CElevatorSimulationDlg::UpdateElevatorDetails(
 	CString details;
 	CString repositionTarget = L"--";
 	if (elevator->repositionTargetFloor != InvalidFloor)
-		repositionTarget.Format(L"%dF", elevator->repositionTargetFloor);
-	details.Format(L"当前楼层：%dF\r\n\r\n方向：%s\r\n\r\n状态：%s\r\n\r\n载客：%d / %d\r\n\r\n再平衡目标：%s",
+		repositionTarget.Format(L"%d 层", elevator->repositionTargetFloor);
+	details.Format(L"当前楼层：%d 层\r\n\r\n方向：%s\r\n\r\n状态：%s\r\n\r\n载客：%d / %d\r\n\r\n再平衡目标：%s",
 		elevator->currentFloor, DirectionText(elevator->direction),
 		ElevatorStateText(elevator->state), elevator->passengerCount, elevator->capacity,
 		repositionTarget.GetString());
@@ -918,14 +926,47 @@ void CElevatorSimulationDlg::UpdateStatisticsTrend(
 
 void CElevatorSimulationDlg::SelectHallCall(HallCallIdentity identity)
 {
+	BeginHallCallObservation(identity);
+	m_rightTabs.SetCurSel(2);
+	UpdateRightPanelVisibility();
+	RelayoutUI();
+}
+
+void CElevatorSimulationDlg::BeginHallCallObservation(HallCallIdentity identity)
+{
 	m_observedHallCall = identity;
 	m_lastRenderedObservation.reset();
 	if (m_simulationWorker)
 		m_simulationWorker->ObserveHallCall(identity.floor, identity.direction);
-	m_rightTabs.SetCurSel(2);
-	UpdateRightPanelVisibility();
-	RelayoutUI();
-	ShowObservationEmptyState(L"正在计算候选电梯评分...");
+	ShowObservationEmptyState(L"正在计算候选电梯评分……");
+}
+
+bool CElevatorSimulationDlg::SelectObservationForElevator(int elevatorId,
+	const std::shared_ptr<const SimulationUISnapshot>& snapshot)
+{
+	if (elevatorId == InvalidElevatorId || !snapshot || snapshot->hallCalls.empty())
+		return false;
+
+	const auto rank = [elevatorId](const HallCallSnapshot& call)
+	{
+		return std::make_tuple(
+			call.assignedElevatorId == elevatorId ? 0 : 1,
+			call.firstRequestTime,
+			call.floorNumber,
+			call.direction == Direction::Up ? 0 : 1);
+	};
+	const auto selected = std::min_element(snapshot->hallCalls.begin(), snapshot->hallCalls.end(),
+		[&rank](const HallCallSnapshot& left, const HallCallSnapshot& right)
+		{
+			return rank(left) < rank(right);
+		});
+	HallCallIdentity identity{ selected->floorNumber, selected->direction };
+	if (!m_observedHallCall || m_observedHallCall->floor != identity.floor ||
+		m_observedHallCall->direction != identity.direction)
+	{
+		BeginHallCallObservation(identity);
+	}
+	return true;
 }
 
 void CElevatorSimulationDlg::ClearHallCallObservation()
@@ -933,7 +974,7 @@ void CElevatorSimulationDlg::ClearHallCallObservation()
 	if (m_simulationWorker) m_simulationWorker->ClearObservedHallCall();
 	m_observedHallCall.reset();
 	m_lastRenderedObservation.reset();
-	ShowObservationEmptyState(L"请在 Hall Call 页选择一个请求");
+	ShowObservationEmptyState(L"请选择外呼请求，或先选择一台电梯自动关联其外呼");
 }
 
 void CElevatorSimulationDlg::ValidateObservedHallCall(
@@ -953,14 +994,15 @@ void CElevatorSimulationDlg::RefreshObservationViews(bool forceRefresh)
 {
 	if (!m_observedHallCall || !m_simulationWorker)
 	{
-		if (forceRefresh) ShowObservationEmptyState(L"请在 Hall Call 页选择一个请求");
+		if (forceRefresh)
+			ShowObservationEmptyState(L"请选择外呼请求，或先选择一台电梯自动关联其外呼");
 		return;
 	}
 	const auto observation = m_simulationWorker->GetLatestObservation();
 	if (!observation || observation->floor != m_observedHallCall->floor ||
 		observation->direction != m_observedHallCall->direction)
 	{
-		if (forceRefresh) ShowObservationEmptyState(L"正在计算候选电梯评分...");
+		if (forceRefresh) ShowObservationEmptyState(L"正在计算候选电梯评分……");
 		return;
 	}
 	if (!observation->valid)
@@ -992,19 +1034,19 @@ void CElevatorSimulationDlg::PopulateObservationViews(
 	CString rightText;
 	if (best == observation.candidates.end())
 	{
-		rightText.Format(L"当前请求：%dF %s\r\n\r\n当前归属：%s\r\n\r\n最佳单梯候选：无可行候选",
+		rightText.Format(L"当前请求：%d 层 %s\r\n\r\n当前归属：%s\r\n\r\n最佳单梯候选：无可行候选",
 			observation.floor, DirectionText(observation.direction), ownerText.GetString());
 	}
 	else
 	{
-		rightText.Format(L"当前请求：%dF %s\r\n\r\n当前归属：%s\r\n\r\n最佳单梯候选：E%d\r\n\r\nETA：%.2f s\r\nCost：%.2f",
+		rightText.Format(L"当前请求：%d 层 %s\r\n\r\n当前归属：%s\r\n\r\n最佳单梯候选：E%d\r\n\r\n预计到达时间：%.2f 秒\r\n调度成本：%.2f",
 			observation.floor, DirectionText(observation.direction), ownerText.GetString(),
 			best->elevatorId + 1, best->eta, best->cost);
 	}
 	m_algorithmPlaceholder.SetWindowTextW(rightText);
 
 	CString pageSummary;
-	pageSummary.Format(L"%dF %s    等待人数：%zu    已等待：%.1f s    当前归属：%s\r\n候选为单请求评分；当前归属还会受到 Joint Dispatch、Reassignment 与 Hysteresis 影响。",
+	pageSummary.Format(L"%d 层 %s    等待人数：%zu    已等待：%.1f 秒    当前归属：%s\r\n候选为单请求评分；当前归属还会受到联合调度、动态改派与滞回保护影响。",
 		observation.floor, DirectionText(observation.direction), observation.waitingCount,
 		(std::max)(0.0, observation.currentTime - observation.firstRequestTime), ownerText.GetString());
 	m_algorithmPageSummary.SetWindowTextW(pageSummary);
@@ -1023,6 +1065,19 @@ void CElevatorSimulationDlg::PopulateObservationViews(
 			{ return candidate->elevatorId == owner->elevatorId; }))
 	{
 		rows.push_back(&*owner);
+	}
+	const int selectedElevatorId = m_buildingView.GetSelectedElevatorId();
+	const auto selectedElevator = std::find_if(observation.candidates.begin(),
+		observation.candidates.end(),
+		[selectedElevatorId](const DispatchCandidateObservation& candidate)
+		{
+			return candidate.elevatorId == selectedElevatorId;
+		});
+	if (selectedElevator != observation.candidates.end() &&
+		std::none_of(rows.begin(), rows.end(), [selectedElevator](const auto* candidate)
+			{ return candidate->elevatorId == selectedElevator->elevatorId; }))
+	{
+		rows.push_back(&*selectedElevator);
 	}
 
 	m_algorithmCandidateList.SetRedraw(FALSE);
@@ -1045,12 +1100,14 @@ void CElevatorSimulationDlg::PopulateObservationViews(
 			m_algorithmCandidateList.SetItemText(row, 1, L"—");
 			m_algorithmCandidateList.SetItemText(row, 2, L"—");
 		}
-		m_algorithmCandidateList.SetItemText(row, 3, candidate.feasible ? L"Yes" : L"No");
+		m_algorithmCandidateList.SetItemText(row, 3, candidate.feasible ? L"是" : L"否");
 		value.Format(L"%d", candidate.projectedOccupancy);
 		m_algorithmCandidateList.SetItemText(row, 4, value);
 		CString mark;
+		if (candidate.elevatorId == selectedElevatorId)
+			mark = L"已选电梯";
 		if (best != observation.candidates.end() && candidate.elevatorId == best->elevatorId)
-			mark = L"最佳单梯候选";
+			mark += mark.IsEmpty() ? L"最佳单梯候选" : L" / 最佳单梯候选";
 		if (candidate.elevatorId == observation.assignedElevatorId)
 			mark += mark.IsEmpty() ? L"当前归属" : L" / 当前归属";
 		m_algorithmCandidateList.SetItemText(row, 5, mark);
@@ -1098,7 +1155,7 @@ void CElevatorSimulationDlg::RefreshSimulationView(bool forceBuildingRefresh)
 	const auto snapshot = m_simulationWorker ? m_simulationWorker->GetLatestSnapshot() : nullptr;
 	if (!snapshot)
 	{
-		SetDlgItemTextW(IDC_SIMULATION_STATE, L"Initializing / 正在初始化");
+		SetDlgItemTextW(IDC_SIMULATION_STATE, L"正在初始化");
 		RefreshBuildingView(snapshot, forceBuildingRefresh);
 		UpdateElevatorDetails(snapshot);
 		UpdateControlStates(snapshot);
@@ -1107,13 +1164,13 @@ void CElevatorSimulationDlg::RefreshSimulationView(bool forceBuildingRefresh)
 	const auto& statistics = snapshot->statistics;
 	const auto& hallCalls = snapshot->hallCalls;
 	const auto& config = snapshot->config;
-	CString stateText = snapshot->workerActive ? SimulationStateText(snapshot->state) : L"Stopped / 已停止";
+	CString stateText = snapshot->workerActive ? SimulationStateText(snapshot->state) : L"已停止";
 	if (!snapshot->lastError.empty() &&
 		(!snapshot->workerActive || snapshot->state == SimulationState::Uninitialized))
-		stateText = L"Error / " + Utf8ToCString(snapshot->lastError);
+		stateText = L"错误：" + Utf8ToCString(snapshot->lastError);
 	SetDlgItemTextW(IDC_SIMULATION_STATE, stateText);
 	CString modelTime;
-	modelTime.Format(L"%.1f / %.1f s", snapshot->currentTime, config.simulationDuration);
+	modelTime.Format(L"%.1f / %.1f 秒", snapshot->currentTime, config.simulationDuration);
 	SetDlgItemTextW(IDC_MODEL_TIME, modelTime);
 	CString trafficText;
 	CString dashboardTrafficText;
@@ -1144,7 +1201,7 @@ void CElevatorSimulationDlg::RefreshSimulationView(bool forceBuildingRefresh)
 	{
 		CString speedText;
 		GetDlgItemTextW(IDC_EDIT_SPEED, speedText);
-		m_headerSpeed.SetWindowTextW(L"x" + speedText);
+		m_headerSpeed.SetWindowTextW(speedText + L" 倍");
 	}
 	else
 	{
@@ -1157,6 +1214,8 @@ void CElevatorSimulationDlg::RefreshSimulationView(bool forceBuildingRefresh)
 	m_floorTrafficHeatmapView.SetStatistics(statistics.floorTraffic);
 	m_floorCoverageView.SetCoverage(snapshot->floorCoverage);
 	ValidateObservedHallCall(snapshot);
+	if (!m_observedHallCall)
+		SelectObservationForElevator(m_buildingView.GetSelectedElevatorId(), snapshot);
 	RefreshObservationViews();
 
 	if (m_pageTabs.GetCurSel() == 0 && m_rightPanelExpanded &&
@@ -1170,7 +1229,7 @@ void CElevatorSimulationDlg::RefreshSimulationView(bool forceBuildingRefresh)
 			const auto& call = hallCalls[index];
 			const int row = static_cast<int>(index);
 			CString value;
-			value.Format(L"%dF", call.floorNumber);
+			value.Format(L"%d 层", call.floorNumber);
 			m_hallCallList.InsertItem(row, value);
 			const DWORD_PTR identity = (static_cast<DWORD_PTR>(call.floorNumber) << 1) |
 				(call.direction == Direction::Up ? 1u : 0u);
@@ -1200,8 +1259,8 @@ void CElevatorSimulationDlg::RefreshSimulationView(bool forceBuildingRefresh)
 	statisticValues[1].Format(L"%zu", statistics.waitingCount);
 	statisticValues[2].Format(L"%zu", statistics.ridingCount);
 	statisticValues[3].Format(L"%zu", statistics.arrivedCount);
-	statisticValues[4].Format(L"%.2f s", statistics.averageWaitingTime);
-	statisticValues[5].Format(L"%.2f s", statistics.maxWaitingTime);
+	statisticValues[4].Format(L"%.2f 秒", statistics.averageWaitingTime);
+	statisticValues[5].Format(L"%.2f 秒", statistics.maxWaitingTime);
 	for (std::size_t index = 0; index < m_statValues.size(); ++index)
 		m_statValues[index].SetWindowTextW(statisticValues[index]);
 	UpdateControlStates(snapshot);

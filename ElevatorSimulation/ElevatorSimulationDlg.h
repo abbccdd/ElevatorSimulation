@@ -146,6 +146,9 @@ private:
 	void ClearStatisticsTrend();
 	void UpdateStatisticsTrend(const std::shared_ptr<const SimulationUISnapshot>& snapshot,
 		bool forceRefresh = false);
+	void BeginHallCallObservation(HallCallIdentity identity);
+	bool SelectObservationForElevator(int elevatorId,
+		const std::shared_ptr<const SimulationUISnapshot>& snapshot);
 	void SelectHallCall(HallCallIdentity identity);
 	void ClearHallCallObservation();
 	void ValidateObservedHallCall(const std::shared_ptr<const SimulationUISnapshot>& snapshot);
