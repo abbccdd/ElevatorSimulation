@@ -10,7 +10,7 @@
 void Statistics::Reset(int elevatorCount, int floorCount)
 {
     if (elevatorCount < 0 || floorCount < 0)
-        throw std::invalid_argument("Statistics dimensions cannot be negative");
+        throw std::invalid_argument("统计维度不能为负数");
 
     StatisticsSnapshot snapshot;
     snapshot.elevators.reserve(static_cast<std::size_t>(elevatorCount));
@@ -36,10 +36,10 @@ StatisticsSnapshot Statistics::GetSnapshot() const
 void Statistics::PassengerCreated(int floor, Direction direction)
 {
     if (direction != Direction::Up && direction != Direction::Down)
-        throw std::logic_error("Invalid request direction statistics event");
+        throw std::logic_error("请求方向统计事件无效");
     auto& traffic = m_snapshot.floorTraffic.at(static_cast<std::size_t>(floor - 1));
     if (traffic.floor != floor)
-        throw std::logic_error("Invalid request floor statistics event");
+        throw std::logic_error("请求楼层统计事件无效");
     ++m_snapshot.totalPassengerCount;
     ++m_snapshot.waitingCount;
     ++traffic.generatedCount;
@@ -52,10 +52,10 @@ void Statistics::PassengerCreated(int floor, Direction direction)
 void Statistics::PassengerBoarded(int floor, double waitingTime)
 {
     if (m_snapshot.waitingCount == 0 || !std::isfinite(waitingTime) || waitingTime < 0.0)
-        throw std::logic_error("Invalid boarding statistics event");
+        throw std::logic_error("登梯统计事件无效");
     auto& traffic = m_snapshot.floorTraffic.at(static_cast<std::size_t>(floor - 1));
     if (traffic.floor != floor || traffic.boardedCount >= traffic.generatedCount)
-        throw std::logic_error("Invalid boarding floor statistics event");
+        throw std::logic_error("登梯楼层统计事件无效");
     --m_snapshot.waitingCount;
     ++m_snapshot.ridingCount;
     ++m_snapshot.boardedCount;
@@ -70,7 +70,7 @@ void Statistics::PassengerBoarded(int floor, double waitingTime)
 void Statistics::PassengerArrived(int elevatorId, double rideTime)
 {
     if (m_snapshot.ridingCount == 0 || !std::isfinite(rideTime) || rideTime < 0.0)
-        throw std::logic_error("Invalid arrival statistics event");
+        throw std::logic_error("到达统计事件无效");
     auto& elevator = m_snapshot.elevators.at(static_cast<std::size_t>(elevatorId));
     --m_snapshot.ridingCount;
     ++m_snapshot.arrivedCount;
@@ -88,7 +88,7 @@ void Statistics::ElevatorMoved(int elevatorId, bool empty)
 
 void Statistics::ElevatorTimeElapsed(int elevatorId, double seconds, ElevatorState state, bool full)
 {
-    if (!std::isfinite(seconds) || seconds < 0.0) throw std::invalid_argument("Invalid elapsed time");
+    if (!std::isfinite(seconds) || seconds < 0.0) throw std::invalid_argument("经过时间无效");
     const std::size_t index = static_cast<std::size_t>(elevatorId);
     auto& elevator = m_snapshot.elevators.at(index);
     if (state == ElevatorState::Idle) elevator.idleTime += seconds;

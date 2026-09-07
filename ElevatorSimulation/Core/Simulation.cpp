@@ -81,21 +81,21 @@ namespace
     const char* ValidateConfig(const SimulationConfig& config)
     {
         if (config.floorCount < 2)
-            return "floorCount must be >= 2";
+            return "楼层数必须至少为 2";
         if (config.elevatorCount <= 0 || config.elevatorCount % 3 != 0)
-            return "elevatorCount must be a positive multiple of 3";
+            return "电梯数量必须是 3 的正倍数";
         if (config.capacity <= 0)
-            return "capacity must be > 0";
+            return "电梯容量必须大于 0";
         if (!IsPositiveFinite(config.moveTimePerFloor))
-            return "moveTimePerFloor must be finite and > 0";
+            return "每层运行时间必须是大于 0 的有限数值";
         if (!IsPositiveFinite(config.personTime))
-            return "personTime must be finite and > 0";
+            return "每人上下客时间必须是大于 0 的有限数值";
         if (!IsPositiveFinite(config.simulationDuration))
-            return "simulationDuration must be finite and > 0";
+            return "仿真总时长必须是大于 0 的有限数值";
         if (!IsPositiveFinite(config.simulationSpeed))
-            return "simulationSpeed must be finite and > 0";
+            return "仿真倍速必须是大于 0 的有限数值";
         if (!std::isfinite(config.passengerRate) || config.passengerRate < 0.0)
-            return "passengerRate must be finite and >= 0";
+            return "客流率必须是大于或等于 0 的有限数值";
         switch (config.trafficPattern)
         {
         case TrafficPattern::Uniform:
@@ -104,7 +104,7 @@ namespace
         case TrafficPattern::InterFloor:
             break;
         default:
-            return "trafficPattern is invalid";
+            return "客流模式无效";
         }
         switch (config.trafficScenario)
         {
@@ -112,11 +112,11 @@ namespace
         case TrafficScenario::OfficeDay:
             break;
         default:
-            return "trafficScenario is invalid";
+            return "客流场景无效";
         }
         if (config.trafficScenario == TrafficScenario::OfficeDay &&
             !std::isfinite(config.passengerRate * 1.5))
-            return "OfficeDay passenger rate exceeds finite range";
+            return "办公楼日周期客流率超出有限数值范围";
         return nullptr;
     }
 }
@@ -126,7 +126,7 @@ bool Simulation::Initialize(const SimulationConfig& config)
     try { return Initialize(config, std::random_device{}()); }
     catch (const std::exception&)
     {
-        m_lastError = "Unable to obtain a random seed; use Initialize(config, seed)";
+        m_lastError = "无法获取随机种子，请指定随机种子后重新初始化";
         return false;
     }
 }
@@ -210,11 +210,11 @@ bool Simulation::Initialize(const SimulationConfig& config, std::uint32_t seed)
     }
     catch (const std::bad_alloc&)
     {
-        m_lastError = "Not enough memory to initialize simulation";
+        m_lastError = "内存不足，无法初始化仿真";
     }
     catch (const std::length_error&)
     {
-        m_lastError = "Configuration exceeds container size limits";
+        m_lastError = "配置超出容器容量限制";
     }
     return false;
 }
@@ -271,7 +271,7 @@ void Simulation::Update(double deltaTime)
                 auto& elevator = m_elevators[index];
                 const ElevatorEvent event = elevator.Advance(elevator.GetTimeToNextEvent());
                 if (event.type == ElevatorEventType::None)
-                    throw std::logic_error("Scheduled elevator action did not complete");
+                    throw std::logic_error("已调度的电梯动作未完成");
                 HandleElevatorEvent(scheduled.elevatorId, event);
             }
             else if (scheduled.type == SimulationEventType::TrafficPhaseChange)
@@ -305,7 +305,7 @@ PassengerId Simulation::AddPassenger(int startFloor, int targetFloor)
     const Direction direction = GetDirection(startFloor, targetFloor);
     m_passengers.emplace(id, Passenger(id, startFloor, targetFloor, m_currentTime));
     if (!m_floors[static_cast<std::size_t>(startFloor - 1)].Enqueue(id, direction))
-        throw std::logic_error("Duplicate passenger in floor queue");
+        throw std::logic_error("楼层队列中存在重复乘客");
     m_hallCalls.try_emplace({ startFloor, direction }, HallCall{ InvalidElevatorId, m_currentTime, id });
     ++m_nextPassengerId;
     m_statistics.PassengerCreated(startFloor, direction);
@@ -319,7 +319,7 @@ void Simulation::GeneratePassengerArrival()
     const auto [start, target] = GeneratePassengerRoute(
         m_activeTrafficPattern, m_config.floorCount, m_random);
     if (AddPassenger(start, target) == InvalidPassengerId)
-        throw std::overflow_error("Passenger ID space exhausted");
+        throw std::overflow_error("乘客编号空间已耗尽");
     ScheduleNextPassengerArrival();
 }
 
@@ -403,9 +403,9 @@ bool Simulation::DispatchCalls()
             auto newOwner = m_elevators[static_cast<std::size_t>(newId)];
             static_assert(std::is_nothrow_move_assignable<Elevator>::value, "Reassignment commit must not throw");
             if (!oldOwner.RemoveHallCall(key.first, key.second))
-                throw std::logic_error("Cannot remove reassigned hall call");
+                throw std::logic_error("无法移除已改派的外呼请求");
             if (!newOwner.AddHallCall(key.first, key.second))
-                throw std::logic_error("Cannot accept reassigned hall call");
+                throw std::logic_error("无法接受已改派的外呼请求");
             m_elevators[static_cast<std::size_t>(oldId)] = std::move(oldOwner);
             m_elevators[static_cast<std::size_t>(newId)] = std::move(newOwner);
             call.assignedElevatorId = newId;
@@ -452,7 +452,7 @@ bool Simulation::DispatchCalls()
             if (id != InvalidElevatorId)
             {
                 if (!m_elevators[static_cast<std::size_t>(id)].AddHallCall(floor, direction))
-                    throw std::logic_error("Dispatcher selected an invalid hall call");
+                    throw std::logic_error("调度器选择了无效的外呼请求");
                 call->second.assignedElevatorId = id;
                 changed = true;
             }
@@ -497,7 +497,7 @@ void Simulation::RebalanceIdleFleet()
     {
         if (!m_elevators[static_cast<std::size_t>(assignment.elevatorId)].
             SetRepositionTarget(assignment.targetFloor))
-            throw std::logic_error("Cannot commit fleet reposition assignment");
+            throw std::logic_error("无法提交梯群再平衡任务");
     }
     m_rebalanceDirty = false;
     m_lastFleetRebalanceTime = m_currentTime;
@@ -589,7 +589,7 @@ void Simulation::StabilizeCurrentTime()
             const PassengerId alighting = elevator.GetNextAlightingPassenger();
             if (alighting != InvalidPassengerId)
             {
-                if (!elevator.BeginAlighting(alighting)) throw std::logic_error("Cannot alight due passenger");
+                if (!elevator.BeginAlighting(alighting)) throw std::logic_error("无法开始到站乘客的离梯动作");
                 m_dispatchDirty = true;
                 changed = true;
                 continue;
@@ -600,11 +600,11 @@ void Simulation::StabilizeCurrentTime()
                 waiting != InvalidPassengerId && elevator.CanBoard())
             {
                 if (!elevator.BeginBoarding(waiting, m_passengers.at(waiting).GetTargetFloor()))
-                    throw std::logic_error("Cannot board assigned passenger");
+                    throw std::logic_error("无法让已分配乘客登梯");
             }
             else
             {
-                if (!elevator.FinishStop()) throw std::logic_error("Cannot finish serviced stop");
+                if (!elevator.FinishStop()) throw std::logic_error("无法结束已服务停站");
                 ReleaseHallCall(snapshot.currentFloor, snapshot.direction, snapshot.id);
             }
             changed = true;
@@ -616,7 +616,7 @@ void Simulation::StabilizeCurrentTime()
             return;
         }
     }
-    throw std::logic_error("Zero-time service decisions did not converge");
+    throw std::logic_error("零时长服务决策未收敛");
 }
 
 void Simulation::HandleElevatorEvent(int elevatorId, const ElevatorEvent& event)
@@ -637,13 +637,13 @@ void Simulation::HandleElevatorEvent(int elevatorId, const ElevatorEvent& event)
         auto& floor = m_floors[static_cast<std::size_t>(passenger.GetStartFloor() - 1)];
         if (!floor.RemoveFront(event.passengerId, passenger.GetDirection()) ||
             !passenger.MarkBoarded(elevatorId, m_currentTime))
-            throw std::logic_error("Invalid passenger boarding transition");
+            throw std::logic_error("乘客登梯状态转换无效");
         m_statistics.PassengerBoarded(passenger.GetStartFloor(),
             m_currentTime - passenger.GetRequestTime());
     }
     else
     {
-        if (!passenger.MarkArrived(m_currentTime)) throw std::logic_error("Invalid passenger arrival transition");
+        if (!passenger.MarkArrived(m_currentTime)) throw std::logic_error("乘客到达状态转换无效");
         m_statistics.PassengerArrived(elevatorId, m_currentTime - passenger.GetBoardTime());
         // Elevator 已先移除 ID；统计累计量保留，活动对象从此消失。
         m_passengers.erase(event.passengerId);

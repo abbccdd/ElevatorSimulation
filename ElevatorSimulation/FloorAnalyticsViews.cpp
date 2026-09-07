@@ -54,7 +54,7 @@ namespace
     CString EtaText(double eta)
     {
         CString text;
-        if (std::isfinite(eta)) text.Format(L"%.2f s", eta);
+        if (std::isfinite(eta)) text.Format(L"%.2f 秒", eta);
         else text = L"无可行运力";
         return text;
     }
@@ -213,7 +213,7 @@ void FloorCoverageView::OnPaint()
     dc.FillSolidRect(header, RGB(255, 255, 255));
     dc.SetTextColor(RGB(35, 43, 55));
     CRect title(12, 7, client.right - 10, 29);
-    dc.DrawTextW(L"未来运力覆盖 / Coverage", title,
+    dc.DrawTextW(L"未来运力覆盖", title,
         DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
     int weakestFloor = InvalidFloor;
@@ -259,21 +259,21 @@ void FloorCoverageView::OnPaint()
     {
         CString averageText = weightedFinite && totalDemand > 0.0 ?
             EtaText(weightedEta / totalDemand) : CString(L"无可行运力");
-        summary.Format(L"最弱覆盖 %dF  |  最高需求 %dF  |  加权平均 %s",
+        summary.Format(L"最弱覆盖 %d 层  |  最高需求 %d 层  |  加权平均 %s",
             weakestFloor, highestDemandFloor, averageText.GetString());
     }
     dc.SetTextColor(RGB(66, 76, 90));
     CRect summaryRect(12, 30, client.right - 10, 52);
     dc.DrawTextW(summary, summaryRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
-    CString detail = L"移入或点选楼层查看当前预测；R 表示正在前往该层的软再平衡目标。";
+    CString detail = L"移入或点选楼层查看当前预测；◆ 表示正在前往该层的软再平衡目标。";
     const int detailIndex = m_selectedIndex >= 0 ? m_selectedIndex : m_hoveredIndex;
     if (detailIndex >= 0 && detailIndex < static_cast<int>(m_coverage.size()))
     {
         const auto& selected = m_coverage[static_cast<std::size_t>(detailIndex)];
         const CString eta = EtaText(selected.coverageEta);
-        detail.Format(L"%dF  需求权重 %.4f  Coverage ETA %s%s", selected.floor,
-            selected.demandWeight, eta.GetString(), selected.hasRepositionTarget ? L"  [R]" : L"");
+        detail.Format(L"%d 层  需求权重 %.4f  预计覆盖时间 %s%s", selected.floor,
+            selected.demandWeight, eta.GetString(), selected.hasRepositionTarget ? L"  [再平衡目标]" : L"");
     }
     dc.SetTextColor(RGB(79, 91, 106));
     CRect detailRect(12, 52, client.right - 10, 78);
@@ -286,7 +286,7 @@ void FloorCoverageView::OnPaint()
     dc.DrawTextW(L"楼层", CRect(10, 80, 52, HeaderHeight), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     dc.DrawTextW(L"需求权重", CRect(demandLeft, 80, etaLeft - 4, HeaderHeight),
         DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
-    dc.DrawTextW(L"ETA", CRect(etaLeft, 80, valueRight, HeaderHeight),
+    dc.DrawTextW(L"预计时间", CRect(etaLeft, 80, valueRight, HeaderHeight),
         DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
 
     const double etaScale = (std::max)(1.0, maximumFiniteEta);
@@ -304,12 +304,12 @@ void FloorCoverageView::OnPaint()
             (row % 2 == 0 ? RGB(250, 251, 253) : RGB(245, 247, 250)));
 
         CString floorText;
-        floorText.Format(L"%dF%s", floor.floor, floor.hasRepositionTarget ? L" R" : L"");
+        floorText.Format(L"%d 层%s", floor.floor, floor.hasRepositionTarget ? L" ◆" : L"");
         dc.SetTextColor(floor.hasRepositionTarget ? RGB(34, 92, 156) : RGB(43, 51, 62));
-        dc.DrawTextW(floorText, CRect(10, rowRect.top, 58, rowRect.bottom),
+        dc.DrawTextW(floorText, CRect(10, rowRect.top, 76, rowRect.bottom),
             DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
-        CRect barArea(61, rowRect.top + 5, demandLeft - 8, rowRect.bottom - 5);
+        CRect barArea(79, rowRect.top + 5, demandLeft - 8, rowRect.bottom - 5);
         if (barArea.Width() > 0)
         {
             dc.FillSolidRect(barArea, RGB(231, 235, 240));
@@ -505,7 +505,7 @@ void FloorTrafficHeatmapView::OnPaint()
         dc.FillSolidRect(rowRect, row % 2 == 0 ? RGB(250, 251, 253) : RGB(245, 247, 250));
 
         CString floorText;
-        floorText.Format(L"%dF", statistics.floor);
+        floorText.Format(L"%d 层", statistics.floor);
         dc.SetTextColor(RGB(43, 51, 62));
         dc.DrawTextW(floorText, CRect(10, rowRect.top, 52, rowRect.bottom),
             DT_LEFT | DT_VCENTER | DT_SINGLELINE);
@@ -527,7 +527,7 @@ void FloorTrafficHeatmapView::OnPaint()
         if (m_metric == FloorHeatmapMetric::RequestCount)
             valueText.Format(L"%llu", static_cast<unsigned long long>(statistics.generatedCount));
         else
-            valueText.Format(L"%.2f s", value);
+            valueText.Format(L"%.2f 秒", value);
         dc.SetTextColor(RGB(55, 64, 75));
         dc.DrawTextW(valueText, CRect(client.right - 94, rowRect.top,
             client.right - 10, rowRect.bottom),

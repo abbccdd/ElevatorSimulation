@@ -7,7 +7,7 @@
 Floor::Floor(int floorNumber) : m_floorNumber(floorNumber)
 {
     if (floorNumber < 1)
-        throw std::invalid_argument("Floor number must be positive");
+        throw std::invalid_argument("楼层编号必须为正数");
 }
 
 FloorSnapshot Floor::GetSnapshot() const
@@ -44,7 +44,7 @@ const std::deque<PassengerId>& Floor::GetWaitingIds(Direction direction) const
 {
     if (direction == Direction::Up) return m_upWaitingPassengers;
     if (direction == Direction::Down) return m_downWaitingPassengers;
-    throw std::invalid_argument("Waiting queue requires Up or Down");
+    throw std::invalid_argument("等待队列方向必须为上行或下行");
 }
 
 bool Floor::EnqueueBatch(const std::vector<PassengerId>& ids, Direction direction)

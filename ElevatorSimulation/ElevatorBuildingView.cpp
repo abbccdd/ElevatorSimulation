@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "ElevatorBuildingView.h"
+#include "ElevatorStatusPalette.h"
 
 #include <algorithm>
 #include <cmath>
@@ -22,7 +23,7 @@ namespace
 		{
 		case Direction::Up: return L"↑";
 		case Direction::Down: return L"↓";
-		default: return L"Idle";
+		default: return L"空闲";
 		}
 	}
 }
@@ -134,7 +135,7 @@ void ElevatorBuildingView::DrawView(CDC& dc, const CRect& client)
 	{
 		CRect messageRect = client;
 		dc.SetTextColor(MutedTextColor);
-		dc.DrawText(L"等待仿真 Snapshot…", messageRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+		dc.DrawText(L"等待仿真快照……", messageRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 		return;
 	}
 
@@ -311,7 +312,7 @@ void ElevatorBuildingView::DrawFloorScale(CDC& dc, const CRect& plot) const
 
 		if (!major && !active) continue;
 		CString label;
-		label.Format(L"%dF", floor);
+		label.Format(L"%d 层", floor);
 		if (upCount > 0)
 		{
 			CString count;
@@ -342,7 +343,7 @@ void ElevatorBuildingView::DrawZoomControls(CDC& dc, const CRect& content)
 	const bool fit = m_visibleFloorMin == 1 &&
 		m_visibleFloorMax == m_snapshot->config.floorCount;
 	const CRect buttons[] = { m_zoomFitHitRect, m_zoomInHitRect, m_zoomOutHitRect };
-	const wchar_t* labels[] = { L"全楼 / Fit", L"放大 +", L"缩小 -" };
+	const wchar_t* labels[] = { L"全楼", L"放大 +", L"缩小 -" };
 	for (int index = 0; index < 3; ++index)
 	{
 		const bool active = index == 0 && fit;
@@ -359,7 +360,7 @@ void ElevatorBuildingView::DrawZoomControls(CDC& dc, const CRect& content)
 CString ElevatorBuildingView::VisibleFloorText() const
 {
 	CString text;
-	text.Format(L"%dF-%dF", m_visibleFloorMin, m_visibleFloorMax);
+	text.Format(L"第 %d–%d 层", m_visibleFloorMin, m_visibleFloorMax);
 	return text;
 }
 
@@ -483,28 +484,31 @@ void ElevatorBuildingView::DrawDetailed(CDC& dc, const CRect& content,
 			continue;
 		}
 
-		const int carWidth = (std::max)(26, (std::min)(64, shaftRight - shaftLeft - 8));
-		const int carHeight = 42;
+		const int carWidth = (std::max)(32, (std::min)(74, shaftRight - shaftLeft - 4));
+		const int carHeight = 48;
 		int carTop = FloorY(visualFloor, plot) - carHeight / 2;
 		carTop = (std::max)(static_cast<int>(plot.top),
 			(std::min)(carTop, static_cast<int>(plot.bottom) - carHeight));
 		CRect car(centerX - carWidth / 2, carTop,
 			centerX + carWidth / 2, carTop + carHeight);
-		dc.FillSolidRect(car, selected ? AccentColor : AccentFillColor);
-		dc.Draw3dRect(car, AccentColor, AccentColor);
+		const auto statusColors = ElevatorStatusPalette::Resolve(elevator);
+		dc.FillSolidRect(car, statusColors.fill);
+		dc.Draw3dRect(car, statusColors.border, statusColors.border);
 		CString carText;
 		const wchar_t* movementText = DirectionText(elevator.direction);
-		if (selected && elevator.state == ElevatorState::Boarding)
-			movementText = L"Boarding";
-		else if (selected && elevator.state == ElevatorState::Alighting)
-			movementText = L"Alighting";
+		if (elevator.state == ElevatorState::Boarding)
+			movementText = L"上客";
+		else if (elevator.state == ElevatorState::Alighting)
+			movementText = L"下客";
+		else if (elevator.state == ElevatorState::Stopped)
+			movementText = L"停靠";
 		if (largeScaleMode && !selected)
 			carText = movementText;
 		else
-			carText.Format(L"%dF %s\n%d/%d", elevator.currentFloor,
+			carText.Format(L"%d 层 %s\n%d/%d", elevator.currentFloor,
 				movementText, elevator.passengerCount, elevator.capacity);
 		CRect carTextRect = car;
-		dc.SetTextColor(selected ? SurfaceColor : TextColor);
+		dc.SetTextColor(statusColors.text);
 		dc.DrawText(carText, carTextRect, DT_CENTER | DT_VCENTER);
 	}
 	dc.SetTextColor(TextColor);
@@ -513,10 +517,7 @@ void ElevatorBuildingView::DrawDetailed(CDC& dc, const CRect& content,
 CString ElevatorBuildingView::GroupName(int groupIndex) const
 {
 	CString name;
-	if (groupIndex < 26)
-		name.Format(L"%c组", L'A' + groupIndex);
-	else
-		name.Format(L"第%d组", groupIndex + 1);
+	name.Format(L"第%d组", groupIndex + 1);
 	return name;
 }
 
@@ -577,7 +578,9 @@ void ElevatorBuildingView::DrawOverview(CDC& dc, const CRect& content)
 			const bool selected = elevator.id == m_selectedElevatorId;
 			CRect marker(markerX - (selected ? 5 : 3), markerY - (selected ? 6 : 4),
 				markerX + (selected ? 6 : 4), markerY + (selected ? 7 : 5));
-			dc.FillSolidRect(marker, selected ? ActivityColor : AccentColor);
+			const auto statusColors = ElevatorStatusPalette::Resolve(elevator);
+			dc.FillSolidRect(marker, statusColors.fill);
+			dc.Draw3dRect(marker, statusColors.border, statusColors.border);
 		}
 	}
 	dc.SetTextColor(TextColor);
