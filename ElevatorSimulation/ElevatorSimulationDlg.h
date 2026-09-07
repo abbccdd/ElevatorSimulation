@@ -91,6 +91,7 @@ private:
 	CButton m_predictiveRebalancingCheck;
 	CFont m_titleFont;
 	CFont m_sectionFont;
+	CFont m_pageTabFont;
 	CFont m_statValueFont;
 	CStatic m_headerTitle;
 	CStatic m_headerStateLabel;

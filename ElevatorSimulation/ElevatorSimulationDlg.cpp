@@ -280,6 +280,10 @@ void CElevatorSimulationDlg::CreateUIFramework()
 	sectionFont.lfHeight = baseFont.lfHeight * 3 / 2;
 	sectionFont.lfWeight = FW_BOLD;
 	m_sectionFont.CreateFontIndirect(&sectionFont);
+	LOGFONT pageTabFont = baseFont;
+	pageTabFont.lfHeight = baseFont.lfHeight * 5 / 4;
+	pageTabFont.lfWeight = FW_SEMIBOLD;
+	m_pageTabFont.CreateFontIndirect(&pageTabFont);
 	LOGFONT valueFont = baseFont;
 	valueFont.lfHeight = baseFont.lfHeight * 7 / 4;
 	valueFont.lfWeight = FW_SEMIBOLD;
@@ -369,6 +373,7 @@ void CElevatorSimulationDlg::CreateUIFramework()
 	m_pageTabs.InsertItem(1, L"统计分析");
 	m_pageTabs.InsertItem(2, L"算法观察");
 	m_pageTabs.SetCurSel(0);
+	m_pageTabs.SetFont(&m_pageTabFont);
 	m_pagePlaceholder.Create(L"", WS_CHILD | WS_BORDER | SS_CENTER | SS_CENTERIMAGE,
 		CRect(), this, IDC_PAGE_PLACEHOLDER);
 	m_statisticsTrendView.Create(this, IDC_STATISTICS_TREND_VIEW);
@@ -423,7 +428,7 @@ void CElevatorSimulationDlg::RelayoutUI()
 	const int gap = 8;
 	const int headerHeight = 66;
 	const int leftWidth = 220;
-	const int tabsHeight = 31;
+	const int tabsHeight = 42;
 	const int statsHeight = 94;
 	const int contentTop = headerHeight + gap;
 	const int contentBottom = clientHeight - margin;
@@ -444,6 +449,7 @@ void CElevatorSimulationDlg::RelayoutUI()
 		GetDlgItem(controlId)->MoveWindow(toDevice(x), toDevice(y),
 			toDevice(width), toDevice(height), TRUE);
 	};
+	m_pageTabs.SetPadding(CSize(toDevice(18), toDevice(8)));
 
 	place(m_headerTitle, margin + 4, 8, 350, 40);
 	const int headerInfoX = (std::max)(380, centerX);
