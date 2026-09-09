@@ -496,6 +496,16 @@ int main()
         const auto empty=dispatcher.PlanAssignments({Call(4,Direction::Up)},{Car(0,1,Direction::Up,{20},{},1,1)},0);
         tests.Check(empty.assignedCount==0 && empty.elevatorIndices[0]==-1,"all infeasible stays pending");
     });
+    tests.Run("joint assignment reuses observable capacity feasibility", [&] {
+        auto full=Car(0,1,Direction::Up,{5},{},1,1);
+        const auto blocked=dispatcher.PlanAssignments({Call(10,Direction::Up)},{full},0);
+        tests.Check(blocked.assignedCount==0 && blocked.elevatorIndices[0]==InvalidElevatorId,
+            "full car without an earlier car call stays infeasible");
+        full.stopServices={{5,Direction::Idle}};
+        const auto released=dispatcher.PlanAssignments({Call(10,Direction::Up)},{full},0);
+        tests.Check(released.assignedCount==1 && released.elevatorIndices[0]==0,
+            "same ScoreSnapshot release estimate makes the joint candidate feasible");
+    });
     tests.Run("aging remains active in joint cost", [&] {
         const std::vector<ElevatorDispatchSnapshot> cars{Car(0,11,Direction::Down,{}, {10}),Car(1,6)};
         const std::vector<HallCallDispatchSnapshot> calls{Call(10,Direction::Up)};
