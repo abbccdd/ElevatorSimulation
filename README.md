@@ -91,9 +91,9 @@ ElevatorSimulation/
 
 Snapshot 按值构造：`SimulationWorker` 将 UI 所需的 `SimulationUISnapshot` 发布为 `shared_ptr<const ...>`，UI 原子读取最近一版，不与 Simulation 并发。高频 UI Snapshot 不填充乘客明细，按需通过独立 `GetPassengerSnapshots()` 获取；UI 不获得 Floor/Elevator/Passenger 的可写指针、引用或容器，`GetConfig()` 同样返回副本。
 
-调度快照 `ElevatorDispatchSnapshot::StopService` 的 Idle 记录表示内呼/下客，Up/Down 记录表示外呼；新增 `boardingTargetFloors` 为已知等待乘客的 FIFO 目标层前缀，最多需要 capacity 人。Simulation 回填真实人数并跳过正在 Boarding 的队头；纯人数旧快照仍可使用，但不会推测未知下客楼层。`SelectElevator` / `SelectFromSnapshots` 签名保持兼容，Dispatcher 不直接读取 Passenger、Floor 或 Simulation。
+调度采用**基于可观测状态的容量估计 + FIFO 实际服务**。Simulation 作为仿真环境拥有完整乘客状态，Dispatcher 只使用传统楼层上下行按钮群控可获得的信息：外呼楼层、方向、首次请求时间，电梯楼层、方向、状态、当前人数/容量、动作剩余时间，已经 Boarded 后产生的 Car Call、已分配外呼及 LOOK 路线。`StopService` 只含楼层和方向（Idle 为内呼），不含每层下客人数；不导出等待目的层、FIFO 目标前缀或真实等待人数。正在 Boarding 的目的层仍隐藏。
 
-新增 `HallCallDispatchSnapshot`（请求及 FIFO 目标副本）、`DispatchScore`（可行性、ETA、Cost、预计人数）与 `DispatchPlan`（归属方案、总成本及搜索计数）。`ScoreSnapshot` 复用同一个评分实现，`SelectReassignment` / `PlanAssignments` 只读决策。`DispatchObservationSnapshot` 由 Simulation 针对真实 Hall Call 构造，只读复用 `BuildDispatchSnapshots` 与 `ScoreSnapshot`，按 feasible、Cost、ETA、ID 排序，绝不提交调度状态。Simulation 负责真实提交，Elevator 仅新增安全的 `RemoveHallCall`，不改变原状态机。
+新增 `HallCallDispatchSnapshot`（按钮请求副本，队头 ID 仅作稳定排序）、`DispatchScore`（可行性、ETA、Cost、估计载荷）与 `DispatchPlan`（归属方案、总成本及搜索计数）。`ScoreSnapshot` 复用同一个评分实现，`SelectReassignment` / `PlanAssignments` 只读决策。`DispatchObservationSnapshot` 由 Simulation 针对真实 Hall Call 构造，只读复用 `BuildDispatchSnapshots` 与 `ScoreSnapshot`，按 feasible、Cost、ETA、ID 排序，绝不提交调度状态。Simulation 负责真实提交，Elevator 仅新增安全的 `RemoveHallCall`，不改变原状态机。
 
 ## 编号、初始化与所有权
 
@@ -179,15 +179,15 @@ Dispatcher 无副作用。当前满载梯若预测在请求层接客前释放容
 
 Dispatcher 的 Aging 保持 `AgingBonus = min(8.0, waitingSeconds × 0.05)`；`AdjustedCost = ETA + LoadCost + max(0, DirectionCost - AgingBonus)`，其中 `LoadCost = T × 请求层完成下客后的 projectedOccupancy / capacity`。顺路与空闲统一比较 Cost，反向忙碌的方向成本为 S+T，按 Cost、ETA、距离、任务数、ID 稳定排序。
 
-ETA 包含当前动作剩余时间、LOOK 路线移动、实际可上下客的逐人 T，以及请求层接客前的下客时间。下客事件消费后清零，Alighting 当前一人只计剩余时间，其余人各计 T；Boarding 预留者的席位与未来下客只计一次。已有等待乘客按 FIFO 和剩余容量预计上梯，其目标层加入局部预演任务，后续下客释放容量。预演不修改真实对象，不预测未来新乘客或未来分配；单次评分不保证全局最优及持续超载下的等待上界。
+ETA 沿现有 LOOK 路线估算：移动每层 S，未知外呼停站固定计 1 × T，有空位时最多估计上 1 人，不生成猜测目的层。每个不同 Car Call 最多估计下 1 人、计 T 并释放一席（不低于零载荷），消费后不能在返程重复释放；请求层先估计下客，再判断是否有空位。LoadCost = T × 接客前估计载荷 / capacity。Boarding 的当前一人只计预留席位和动作剩余时间，不重复估计当前外呼；Alighting 当前一人只计剩余时间并释放一席，不假定同层其他人数。真实 Elevator 仍逐人服务 T 秒，Floor::Peek / RemoveFront 决定实际 FIFO 顺序；只有 Boarded 完成后才公开目的层内呼。预测允许误差，由真实状态变化触发动态重评估和改派修正，不保证全局最优或持续超载下的等待上界。
 
 Hall Call 动态改派只由新乘客、到层、上下客完成和零耗时状态变化触发，不受 UI 帧率驱动。同一仿真时刻最多一轮改派。先用 `ScoreSnapshot` 评估原梯；在请求层真正 Stopped/Boarding/Alighting 且 `betweenFloors=false` 时始终禁止改派。原梯不可行时立即找其他可行候选，不受普通 proximity/cooldown/收益阈值限制。原梯仍可行时，改派后冷却 10 仿真秒，且必须改善 ETA 至少 5 秒；仅在 Moving、betweenFloors 且方向真正朝请求层、整数层距离不超过 1 时使用临近锁。同层已驶离或相邻但正在远离不触发临近锁。所有阈值集中定义于 Dispatcher.h。
 
 `RemoveHallCall` 只删除指定方向外呼：当前层 Stopped/Boarding/Alighting 禁止撤销，Moving 中已经离开的整数层允许撤销。内呼、当前方向、动作状态和剩余时间保持不变，后续事件继续由既有 Elevator 状态机处理。
 
-未分配请求按 firstRequestTime / firstPassengerId / key 排序，再逐个用当前完整快照调用现有 ScoreSnapshot。存在至少一台 feasible 候选时为 Active；全部不可服务时为临时 DeferredCapacity，不占联合分配的三个名额。例如前三个 Deferred、后面三个 Active，后面三个直接组成联合批次。Deferred 不保存为永久请求状态，不删除真实 Floor/HallCall，不重置原等待时间或 FIFO 队头；容量释放或路线结构变化后的调度事件会重新评估。沿用 m_dispatchDirty，包括 Alighted 和外呼改派/释放/撤销，不增加定时事件或 UI 每帧扫描，也不扩 UI 公共接口。DeferredCapacity 是核心调度语义，后续 UI 可显示为灰色“等待运力”。
+未分配请求按 firstRequestTime / firstPassengerId / key 排序，再逐个用当前完整快照调用现有 ScoreSnapshot。存在至少一台 feasible 候选时为 Active；全部不可服务时为临时 DeferredCapacity，不占联合分配的三个名额。例如前三个 Deferred、后面三个 Active，后面三个直接组成联合批次。Deferred 不保存为永久请求状态，不删除真实 Floor/HallCall，不重置原等待时间或 FIFO 队头；容量释放或路线结构变化后的调度事件会重新评估。沿用 m_dispatchDirty，包括 Alighted 和外呼改派/释放/撤销，不增加定时事件或 UI 每帧扫描，也不扩 UI 公共接口。DeferredCapacity 是核心调度语义，后续 UI 可显示为灰色“等待运力”。 当前满载且在接客前无已知 Car Call 时不可行；若之前（含请求层先下客）有内呼，可估计至少释放一席，但较早外呼也可能再次占用该席。DeferredCapacity 完全复用此 ScoreSnapshot 估计，不读取真实队列或另写容量逻辑。
 
-每批只规划最老 3 个 Active 请求；每个请求最多选 3 台候选梯和“暂不分配”，每批最多 64 个组合。每插入一个请求就在局部快照增加任务、FIFO 上客及未来下客，再计算后续请求；最终还会重算较早请求被新增任务影响后的 ETA/载荷。先最大化可分配数量，再依总 Cost、最大 ETA、总 ETA、请求顺序中的电梯 ID 比较。一次 DispatchCalls 内提交本批、重建快照并重新预筛剩余 pending，直到没有 Active pending 或本批 assignedCount == 0。每个成功批次至少减少一个 pending，不推进时间、不反复改派；所有请求 Deferred 时正常退出并全部留队。候选截断和有限批次不等于全局最优。
+每批只规划最老 3 个 Active 请求；每个请求最多选 3 台候选梯和“暂不分配”，每批最多 64 个组合。每插入一个请求就在局部快照增加外呼按钮任务，以固定一人估计服务，再计算后续请求；最终还会重算较早请求被新增任务影响后的 ETA/载荷。先最大化可分配数量，再依总 Cost、最大 ETA、总 ETA、请求顺序中的电梯 ID 比较。一次 DispatchCalls 内提交本批、重建快照并重新预筛剩余 pending，直到没有 Active pending 或本批 assignedCount == 0。每个成功批次至少减少一个 pending，不推进时间、不反复改派；所有请求 Deferred 时正常退出并全部留队。候选截断和有限批次不等于全局最优。
 
 统计的等待时间包含上梯 T，以完成上梯者为样本；乘梯时间包含下梯 T，以已到达者为样本。截止仍等待/乘梯者保持活动状态。比较算法时必须同时看送达量与积压，不能只比较已完成样本的均值。
 
@@ -212,9 +212,25 @@ Hall Call 动态改派只由新乘客、到层、上下客完成和零耗时状�
 & '.\Tests\RunCoreTests.cmd' All x86
 ```
 
-测试脚本通过 vswhere 使用现有 MSVC，以 C++17、`/W4 /WX` 独立编译 Core/Statistics，不包含或链接 MFC，也不增加第二个 VS 工程。冒烟脚本默认 x64，也支持参数 x86；新增核心测试脚本支持 x64/x86。输出分别位于 `build/core-smoke/<arch>/` 与 `build/core-tests/<arch>/`。冒烟测试的原 406 项检查完整保留；新增测试覆盖状态机、FIFO 预演和完整事件流程。退出码非零表示编译或验证失败。
+测试脚本通过 vswhere 使用现有 MSVC，以 C++17、`/W4 /WX` 独立编译 Core/Statistics，不包含或链接 MFC，也不增加第二个 VS 工程。冒烟脚本默认 x64，也支持参数 x86；新增核心测试脚本支持 x64/x86。输出分别位于 `build/core-smoke/<arch>/` 与 `build/core-tests/<arch>/`。冒烟测试的原 406 项检查完整保留；新增测试覆盖状态机、可观测容量估计、真实 FIFO 服务和完整事件流程。退出码非零表示编译或验证失败。
 
 若出现 C1010，检查新核心文件是否误启用了 MFC PCH；若中文乱码，检查 C++ 的 `/utf-8` 和资源编码；若启动提示 MFC DLL 缺失，检查对应架构的现有 VS/MFC 运行环境，不能以改写核心依赖来规避。Debug 运行需要开发环境，不作为分发包；后续分发 Release 再处理相应 VC++ 运行库。
+
+2026-09-09 传统按钮可观测调度验证（本次）：
+
+| 验证项 | x64 / x86 结果（每架构） |
+| --- | --- |
+| RunCoreSmokeTests.cmd | 491 项通过，冒烟源文件未改，原 406 项完整保留 |
+| RunCoreTests.cmd All | 194 个场景、53,111 项检查，0 失败 |
+| Dispatcher / Elevator | 75 场景、317 项 / 26 场景、87 项 |
+| FleetRebalancer / Simulation / Concurrency | 16 场景、138 项 / 68 场景、33,104 项 / 9 场景、19,465 项 |
+| MFC Debug / Release | 两架构四配置全部编译通过 |
+
+日志为 `build/observability-*.log`，不提交生成文件。默认 x64/Debug 可执行文件被占用，MFC 使用 MSBuild `/p:OutDir` 输出到 `build/observability-mfc/<arch>/<configuration>/`，未修改工程配置或停止正在运行的程序。复现核心检查：`Tests\RunCoreSmokeTests.cmd`、`Tests\RunCoreSmokeTests.cmd x86`、`Tests\RunCoreTests.cmd All x64`、`Tests\RunCoreTests.cmd All x86`。
+
+旧精确 FIFO 预测断言已迁移为可观测估计断言；实际 FIFO、逐人服务、守恒和截止检查保留。改派场景现在检查 17F 乘客 Boarded 前不预知其 1F 目的层，完成后才改派。OfficeDay 含真实客流的旧“UpPeak 驻点均值必低于 DownPeak”断言在新轨迹下不成立：两个时刻的忙碌梯基线不同，不能作为阶段切换不变量；改为直接检查各阶段需求权重和有效驻点，保留独立再平衡与 Coverage 对 ScoreSnapshot 的测试。
+
+本次高客流回归生成 4,815 人，送达 3,434、等待 1,361、乘梯 20，仍有积压；一小时回归生成 2,186、送达 2,175。未重新运行固定贪心基线对比或做本轮性能提升结论。下面的历史测量均保留原版本口径，不代表当前分支结果。
 
 2026-08-31 工程准备验证：
 
@@ -244,7 +260,7 @@ Hall Call 动态改派只由新乘客、到层、上下客完成和零耗时状�
 | 一小时：seed=987，λ=0.6 | 生成 2,186，送达 2,176，全部采样一致性检查通过 |
 | 固定任务对照 | 同向路线实际响应 10 秒，纯最近距离选择需 30 秒；不代表所有客流均优 |
 
-具体配置见 Tests/SimulationTests.cpp。本次 Deferred 修复日志位于 `build/verification/deferred-capacity/`，不提交生成文件；核心只改 Simulation.cpp 的窗口预筛，既有 Dispatcher 评分、Elevator 状态机和公共接口均未修改。新增回归覆盖三个 Deferred 不占 Active 窗口、实际分配与三个 Active 的联合计划对照、FIFO/Aging 连续、路线撤销/顺序变化后恢复、Alighted 后正常服务及含 Deferred 的分帧一致性；原全不可行批次退出和 2000 人等测试继续保留。
+具体配置见 Tests/SimulationTests.cpp。历史 Deferred 修复日志位于 `build/verification/deferred-capacity/`，不提交生成文件；核心只改 Simulation.cpp 的窗口预筛，既有 Dispatcher 评分、Elevator 状态机和公共接口均未修改。新增回归覆盖三个 Deferred 不占 Active 窗口、实际分配与三个 Active 的联合计划对照、FIFO/Aging 连续、路线撤销/顺序变化后恢复、Alighted 后正常服务及含 Deferred 的分帧一致性；原全不可行批次退出和 2000 人等测试继续保留。
 
 2026-09-02 多线程架构验证：
 
@@ -263,7 +279,7 @@ Hall Call 动态改派只由新乘客、到层、上下客完成和零耗时状�
 
 专项回归覆盖同刻多梯动作、动作与随机到达碰撞、两类截止边界、大步/小步完整状态一致、移动中到达请求的 ETA 剩余时间、固定 seed/四种客流、Sequential/Parallel、长时高流、Pause/Resume 与 Reset 清历。`Tests/RunSimulationPerformance.ps1` 用同一 MSVC `/O2`、seed 和 100 层/99 梯场景分别编译固定旧 HEAD 与当前代码，只报告 wall-clock、不设置易波动的速度门槛。
 
-以下保留固定归属贪心 `0fade61` 与联合分配初版 `e7b96a6` 的历史对照，不是本轮 Deferred 修复的重新测量。两版使用相同 S/T、FIFO 注入、seed 和 MSVC `/O2 /MD`；`Tests/RunDispatchComparison.ps1 x64` 可在 build 内导出固定旧基线与当前源码重新对照，不切换分支。对照程序不加入 MFC 可执行文件。平均等待包含上梯 T：
+以下保留固定归属贪心 `0fade61` 与联合分配初版 `e7b96a6` 的历史对照，不是本次可观测模型的重新测量。两版使用相同 S/T、FIFO 注入、seed 和 MSVC `/O2 /MD`；`Tests/RunDispatchComparison.ps1 x64` 可在 build 内导出固定旧基线与当前源码重新对照，不切换分支。对照程序不加入 MFC 可执行文件。平均等待包含上梯 T：
 
 | 固定场景 | 原贪心固定归属均等候（秒） | 联合分配+动态改派均等候（秒） | 送达旧/新 |
 | --- | ---: | ---: | ---: |

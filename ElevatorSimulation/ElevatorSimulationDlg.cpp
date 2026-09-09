@@ -787,7 +787,7 @@ void CElevatorSimulationDlg::InitializeListControls()
 	m_algorithmCandidateList.InsertColumn(1, L"到达（秒）", LVCFMT_RIGHT, 110);
 	m_algorithmCandidateList.InsertColumn(2, L"成本", LVCFMT_RIGHT, 90);
 	m_algorithmCandidateList.InsertColumn(3, L"可行", LVCFMT_CENTER, 70);
-	m_algorithmCandidateList.InsertColumn(4, L"预计载客", LVCFMT_RIGHT, 110);
+	m_algorithmCandidateList.InsertColumn(4, L"估计载荷", LVCFMT_RIGHT, 110);
 	m_algorithmCandidateList.InsertColumn(5, L"备注", LVCFMT_LEFT, 220);
 }
 

@@ -509,12 +509,6 @@ HallCallDispatchSnapshot Simulation::BuildHallCallSnapshot(const HallCallKey& ke
     request.floor = key.first; request.direction = key.second;
     request.firstRequestTime = call.firstRequestTime;
     request.firstPassengerId = call.firstPassengerId;
-    const auto& queue = m_floors[static_cast<std::size_t>(key.first - 1)].GetWaitingIds(key.second);
-    request.waitingCount = static_cast<int>((std::min)(queue.size(),
-        static_cast<std::size_t>((std::numeric_limits<int>::max)())));
-    const auto count = (std::min)(queue.size(), static_cast<std::size_t>(m_config.capacity));
-    for (std::size_t index = 0; index < count; ++index)
-        request.targetFloors.push_back(m_passengers.at(queue[index]).GetTargetFloor());
     return request;
 }
 
@@ -530,31 +524,6 @@ std::vector<ElevatorDispatchSnapshot> Simulation::BuildDispatchSnapshots() const
         if (std::isfinite(m_elevatorScheduledTimes[index]))
             snapshots[index].remainingActionTime = (std::max)(0.0,
                 m_elevatorScheduledTimes[index] - m_currentTime);
-        const auto elevatorState = snapshots[index].elevator;
-        const auto& elevator = m_elevators[index];
-        for (auto& stop : snapshots[index].stopServices)
-        {
-            if ((stop.direction != Direction::Up && stop.direction != Direction::Down) ||
-                !elevator.HasHallCall(stop.floor, stop.direction))
-                continue;
-            const auto& waiting = m_floors[static_cast<std::size_t>(stop.floor - 1)].GetWaitingIds(stop.direction);
-            std::size_t reserved = 0;
-            // Boarding 中的队头仍在 Floor，预留席位已经计入 occupancy，不能重复算入 ETA。
-            if (elevatorState.state == ElevatorState::Boarding &&
-                elevatorState.currentFloor == stop.floor && elevatorState.direction == stop.direction)
-            {
-                reserved = (std::min)(waiting.size(), static_cast<std::size_t>(snapshots[index].reservedBoardingCount));
-            }
-            const std::size_t waitingCount = waiting.size() - reserved;
-            stop.boardingCount = static_cast<int>((std::min)(waitingCount,
-                static_cast<std::size_t>((std::numeric_limits<int>::max)())));
-            // 一次最多登梯 capacity 人，只需这个 FIFO 前缀；大队列不会放大每次快照。
-            const std::size_t targetCount = (std::min)(waitingCount, static_cast<std::size_t>(elevatorState.capacity));
-            stop.boardingTargetFloors.clear();
-            stop.boardingTargetFloors.reserve(targetCount);
-            for (std::size_t passenger = 0; passenger < targetCount; ++passenger)
-                stop.boardingTargetFloors.push_back(m_passengers.at(waiting[reserved + passenger]).GetTargetFloor());
-        }
     }
     return snapshots;
 }
@@ -680,9 +649,10 @@ DispatchObservationSnapshot Simulation::GetDispatchObservation(int floor, Direct
     if (call == m_hallCalls.end()) return observation;
 
     const auto request = BuildHallCallSnapshot(call->first, call->second);
-    if (request.waitingCount == 0) return observation;
+    const auto waitingCount = m_floors[static_cast<std::size_t>(floor - 1)].GetWaitingIds(direction).size();
+    if (waitingCount == 0) return observation;
     observation.valid = true;
-    observation.waitingCount = static_cast<std::size_t>(request.waitingCount);
+    observation.waitingCount = waitingCount;
     observation.firstRequestTime = request.firstRequestTime;
     observation.currentTime = m_currentTime;
     observation.assignedElevatorId = call->second.assignedElevatorId;

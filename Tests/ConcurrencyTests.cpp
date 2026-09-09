@@ -185,6 +185,20 @@ int main()
         }
     });
 
+    tests.Run("observable dispatch is deterministic across execution and Update sizes", [&] {
+        auto config=TestConfig(); config.simulationDuration=20; config.predictiveRebalancing=true;
+        Simulation sequential,parallel;
+        parallel.SetDispatcherExecutionMode(DispatcherExecutionMode::Parallel,4);
+        sequential.Initialize(config,20260909); parallel.Initialize(config,20260909);
+        sequential.Start(); parallel.Start();
+        for(int batch=0;batch<4;++batch) {
+            sequential.Update(5);
+            for(int frame=0;frame<40;++frame) parallel.Update(0.125);
+            SameState(tests,sequential,parallel);
+        }
+        tests.Check(sequential.ValidateState() && parallel.ValidateState(),"conservation across execution modes and frames");
+    });
+
     tests.Run("pause resume resets wall clock", [&]
     {
         auto config = TestConfig();
