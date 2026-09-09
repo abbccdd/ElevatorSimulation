@@ -55,6 +55,16 @@ void SimulationWorker::Reset()
     Enqueue({ CommandType::Reset });
 }
 
+void SimulationWorker::AddPassengers(int startFloor, int upCount, int downCount)
+{
+    Command command;
+    command.type = CommandType::AddPassengers;
+    command.floor = startFloor;
+    command.upCount = upCount;
+    command.downCount = downCount;
+    Enqueue(command);
+}
+
 void SimulationWorker::ObserveHallCall(int floor, Direction direction)
 {
     Enqueue({ CommandType::ObserveHallCall, floor, direction });
@@ -147,6 +157,15 @@ void SimulationWorker::ThreadMain()
                 case CommandType::Resume: simulation.Resume(); break;
                 case CommandType::Reset:
                     simulation.Reset();
+                    observationRequested = observedHallCall.has_value();
+                    break;
+                case CommandType::AddPassengers:
+                    if (command.upCount > 0)
+                        simulation.AddPassengersAtFloor(
+                            command.floor, Direction::Up, command.upCount);
+                    if (command.downCount > 0)
+                        simulation.AddPassengersAtFloor(
+                            command.floor, Direction::Down, command.downCount);
                     observationRequested = observedHallCall.has_value();
                     break;
                 case CommandType::ObserveHallCall:

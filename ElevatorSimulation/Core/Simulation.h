@@ -55,6 +55,9 @@ public:
         bool includeFloorCoverage = true) const;
     // 手工注入便于测试/演示，生成时间为当前仿真时间；失败返回 -1。
     PassengerId AddPassenger(int startFloor, int targetFloor);
+    // 在指定楼层按方向批量注入乘客，目的层在该方向的有效楼层中均匀生成。
+    // 整批参数无效时不修改仿真；成功时所有乘客使用同一当前仿真时刻。
+    bool AddPassengersAtFloor(int startFloor, Direction direction, int count);
     // 只读一致性诊断：所有权、人数守恒、楼层/方向、外呼唯一归属。
     bool ValidateState() const;
 

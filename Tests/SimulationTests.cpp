@@ -517,6 +517,29 @@ int main()
         tests.Check(simulation.AddPassenger(1,2)==0,"no ID consumed by invalid request"); simulation.Start(); simulation.Update(100);
         tests.Check(simulation.AddPassenger(1,2)==-1,"finished");
     });
+    tests.Run("directional batch injection", [&] {
+        Simulation simulation; simulation.Initialize(Config(),42);
+        tests.Check(simulation.AddPassengersAtFloor(3,Direction::Up,4),"add upward batch");
+        tests.Check(simulation.AddPassengersAtFloor(3,Direction::Down,3),"add downward batch");
+        const auto passengers=simulation.GetPassengerSnapshots();
+        tests.Check(passengers.size()==7,"all batch passengers created");
+        for(const auto& passenger:passengers) {
+            tests.Check(passenger.startFloor==3,"batch start floor retained");
+            tests.Check((passenger.direction==Direction::Up && passenger.targetFloor>3) ||
+                (passenger.direction==Direction::Down && passenger.targetFloor<3),
+                "batch target follows requested direction");
+        }
+        const auto floors=simulation.GetFloorSnapshots();
+        tests.Check(floors[2].upWaitingCount==4 && floors[2].downWaitingCount==3,
+            "directional queues expose batch counts");
+        const std::size_t before=simulation.GetStatisticsSnapshot().totalPassengerCount;
+        tests.Check(!simulation.AddPassengersAtFloor(6,Direction::Up,1) &&
+            !simulation.AddPassengersAtFloor(1,Direction::Down,1) &&
+            !simulation.AddPassengersAtFloor(3,Direction::Idle,1) &&
+            !simulation.AddPassengersAtFloor(3,Direction::Up,0),"invalid batch rejected");
+        tests.Check(simulation.GetStatisticsSnapshot().totalPassengerCount==before &&
+            simulation.ValidateState(),"invalid batch preserves state");
+    });
     tests.Run("IDs are not reused after arrival", [&] {
         Simulation simulation; simulation.Initialize(Config(),42); simulation.AddPassenger(1,2); simulation.Start(); simulation.Update(10);
         tests.Check(simulation.AddPassenger(1,2)==1,"monotonic ID"); tests.Check(simulation.ValidateState(),"registry");

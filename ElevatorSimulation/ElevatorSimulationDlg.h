@@ -56,8 +56,11 @@ protected:
 	afx_msg void OnBnClickedSpeed2();
 	afx_msg void OnBnClickedSpeed5();
 	afx_msg void OnBnClickedSpeed10();
+	afx_msg void OnBnClickedAddPassengers();
+	afx_msg void OnEnChangeManualFloor();
 	afx_msg void OnCbnSelchangeTrafficScenario();
 	afx_msg void OnBnClickedPanelToggle();
+	afx_msg void OnTcnSelchangeLeftTabs(NMHDR* pNMHDR, LRESULT* pResult);
 	afx_msg void OnTcnSelchangePages(NMHDR* pNMHDR, LRESULT* pResult);
 	afx_msg void OnTcnSelchangeRightTabs(NMHDR* pNMHDR, LRESULT* pResult);
 	afx_msg void OnNMClickHallCallList(NMHDR* pNMHDR, LRESULT* pResult);
@@ -89,6 +92,7 @@ private:
 	CComboBox m_trafficScenarioCombo;
 	CComboBox m_trafficPatternCombo;
 	CButton m_predictiveRebalancingCheck;
+	CFont m_bodyFont;
 	CFont m_titleFont;
 	CFont m_sectionFont;
 	CFont m_pageTabFont;
@@ -100,6 +104,7 @@ private:
 	CStatic m_headerSpeed;
 	CStatic m_headerTraffic;
 	CButton m_leftPanel;
+	CTabCtrl m_leftTabs;
 	CButton m_mainPanel;
 	CButton m_rightPanel;
 	CButton m_panelToggle;
@@ -119,6 +124,14 @@ private:
 	ElevatorDetailDashboardLarge m_elevatorDetailBody;
 	CStatic m_algorithmPlaceholder;
 	CStatic m_parameterSection;
+	CStatic m_manualSection;
+	CStatic m_manualDescription;
+	std::array<CStatic, 3> m_manualLabels;
+	CEdit m_manualFloorEdit;
+	CEdit m_manualUpEdit;
+	CEdit m_manualDownEdit;
+	CButton m_addPassengersButton;
+	CStatic m_manualFeedback;
 	CStatic m_controlSection;
 	CStatic m_speedSection;
 	std::array<CStatic, 11> m_parameterLabels;
@@ -144,6 +157,9 @@ private:
 	void CreateUIFramework();
 	void InitializeListControls();
 	void RelayoutUI();
+	void UpdateLeftPanelVisibility();
+	void UpdateManualDirectionLocks(
+		const std::shared_ptr<const SimulationUISnapshot>& snapshot, bool updateHint);
 	void UpdateTabPageVisibility();
 	void UpdateRightPanelVisibility();
 	void UpdateElevatorDetails(const std::shared_ptr<const SimulationUISnapshot>& snapshot);
@@ -164,6 +180,8 @@ private:
 	bool ReadConfiguration(SimulationConfig& config, std::uint32_t& seed);
 	bool ReadIntControl(int controlId, const wchar_t* fieldName, int& value);
 	bool ReadDoubleControl(int controlId, const wchar_t* fieldName, double& value);
+	bool ReadManualInteger(CEdit& control, const wchar_t* fieldName, int& value);
+	void ShowManualInputError(CEdit& control, const CString& message);
 	void ShowInputError(const CString& message);
 	void UpdateControlStates(const std::shared_ptr<const SimulationUISnapshot>& snapshot);
 	void RefreshBuildingView(const std::shared_ptr<const SimulationUISnapshot>& snapshot,

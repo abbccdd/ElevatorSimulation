@@ -314,6 +314,33 @@ PassengerId Simulation::AddPassenger(int startFloor, int targetFloor)
     return id;
 }
 
+bool Simulation::AddPassengersAtFloor(int startFloor, Direction direction, int count)
+{
+    const bool directionHasDestination =
+        (direction == Direction::Up && startFloor < m_config.floorCount) ||
+        (direction == Direction::Down && startFloor > 1);
+    const auto maximumPassengerId =
+        static_cast<std::uint64_t>((std::numeric_limits<PassengerId>::max)());
+    if (m_state == SimulationState::Uninitialized || IsFinished() ||
+        startFloor < 1 || startFloor > m_config.floorCount || !directionHasDestination ||
+        count <= 0 || m_currentTime >= m_config.simulationDuration ||
+        m_nextPassengerId > maximumPassengerId ||
+        static_cast<std::uint64_t>(count - 1) > maximumPassengerId - m_nextPassengerId)
+    {
+        return false;
+    }
+
+    const int firstTarget = direction == Direction::Up ? startFloor + 1 : 1;
+    const int lastTarget = direction == Direction::Up ? m_config.floorCount : startFloor - 1;
+    std::uniform_int_distribution<int> targetDistribution(firstTarget, lastTarget);
+    for (int index = 0; index < count; ++index)
+    {
+        if (AddPassenger(startFloor, targetDistribution(m_random)) == InvalidPassengerId)
+            throw std::logic_error("已校验的批量乘客注入失败");
+    }
+    return true;
+}
+
 void Simulation::GeneratePassengerArrival()
 {
     const auto [start, target] = GeneratePassengerRoute(

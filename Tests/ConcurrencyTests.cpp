@@ -258,6 +258,26 @@ int main()
             "reset restores initial fixed-seed state");
     });
 
+    tests.Run("worker queues manual directional passengers", [&]
+    {
+        auto config = TestConfig();
+        config.passengerRate = 0.0;
+        SimulationWorker worker(config, 88, DispatcherExecutionMode::Parallel, 2);
+        auto snapshot = WaitForSnapshot(worker,
+            [](const auto& value) { return value.state == SimulationState::Ready; },
+            std::chrono::seconds(2));
+        if (!snapshot) throw std::runtime_error("worker did not initialize for manual passengers");
+        worker.AddPassengers(7, 3, 2);
+        snapshot = WaitForSnapshot(worker,
+            [](const auto& value) { return value.statistics.totalPassengerCount == 5; },
+            std::chrono::seconds(2));
+        if (!snapshot) throw std::runtime_error("worker did not publish manual passengers");
+        const auto floor = std::find_if(snapshot->floors.begin(), snapshot->floors.end(),
+            [](const FloorSnapshot& item) { return item.floorNumber == 7; });
+        tests.Check(floor != snapshot->floors.end() && floor->upWaitingCount == 3 &&
+            floor->downWaitingCount == 2, "worker preserves manual direction counts");
+    });
+
     tests.Run("worker publishes and clears read-only observation", [&]
     {
         auto config = TestConfig();

@@ -293,10 +293,11 @@ Hall Call 动态改派只由新乘客、到层、上下客完成和零耗时状�
 
 ## MFC UI 初步集成
 
-当前主对话框已经打通“输入参数 → Start → 实时运行与显示 → Pause/Resume → Finished → Reset”的最小完整链路，界面保持原生 MFC 风格，暂不包含主题、自绘、图片或复杂动画。
+当前主对话框已经打通“输入参数 → Start → 实时运行与显示 → 手动客流注入 → Pause/Resume → Finished → Reset”的完整链路。窗口采用可缩放的三栏仪表盘布局，左侧配置与手动客流分页、右侧外呼/电梯/算法信息分页，避免所有信息同时堆叠。
 
 - 参数区提供楼层数 L、电梯数 N、容量 K、每层运行时间 S、每人上下客时间 T、总时长、全楼乘客产生率、客流场景、客流模式、仿真倍速与固定 seed。场景可选“固定模式”或“办公楼日周期”；OfficeDay 会禁用模式下拉框，由事件阶段自动选择早高峰、日间层间、晚高峰。顶部实时显示当前场景/阶段。所有参数仍仅在 Ready 时可修改，UI 只做严格转换，核心统一校验。
 - 控制区提供开始、暂停、继续和重置。按钮及参数编辑框随 `Ready`、`Running`、`Paused`、`Finished` 状态启用或禁用；Finished 保留最终快照，必须 Reset 后才能开始下一轮。
+- “手动客流”页可在 Running 或 Paused 状态输入出发楼层、上行人数和下行人数，单方向每次最多 500 人。1 层的下行输入和最高层的上行输入会自动归零并锁定；核心接口也会再次拒绝非法边界方向。`SimulationWorker` 只负责把命令送入模型线程；`Simulation::AddPassengersAtFloor` 在对应方向的有效楼层中生成目的层，UI 不保存或修改乘客对象。
 - 对话框使用 33 ms MFC Timer，只读取最新 `SimulationUISnapshot` 并更新控件。真实时间采样和 `Simulation::Update(realDelta)` 只在 SimulationWorker 中发生；Start、Pause、Resume、Reset 命令都会重设工作线程的墙钟基准。
 - UI 从一份不可变快照读取电梯、楼层、Hall Call 和统计。电梯列表显示 E1~EN、真实楼层、方向、动作状态和载客量；楼层列表按高层到低层显示上下行等待；Hall Call 列表显示等待人数和归属；统计区显示模型时间、生成/等待/乘梯/到达人数及平均等待、平均乘梯、最大等待。
 - Reset 命令沿用最近成功配置和 seed，清空模型时间、乘客、楼层队列和统计并回到 Ready。Ready 状态再次 Start 时会根据当前输入框重建 Worker，因此用户修改参数后不会误用旧配置；关闭窗口会发送 Stop 并 join 所有线程。
@@ -328,4 +329,4 @@ worker.Stop(); // 正常停止并 join
 
 核心单元测试仍可直接构造 `Simulation`，设置 passengerRate=0 并通过 AddPassenger 注入确定请求。`RunCoreTests.cmd` 可指定 Dispatcher、Elevator、Simulation、Concurrency 或 All，第二个参数为 x64/x86；`RunDispatchPerformance.ps1` 生成候选评分性能表。测试源在 VS 中作为 Development 文件显示，不加入 MFC 可执行文件，以免产生第二个 main。
 
-下一步可在不改变 UI/核心边界的前提下完善窗口缩放、视觉样式、Deferred 专门标识和正式动画。所有控件更新仍在主线程，不得把业务推进或可写核心对象移回 UI。当前无独立开关门时间、加减速、分区停车、峰值预测或全局最优保证；这些是明确的课程设计简化，不是已经实现的高级群控。
+下一步可在不改变 UI/核心边界的前提下完善 Deferred 专门标识和正式动画。所有控件更新仍在主线程，不得把业务推进或可写核心对象移回 UI。当前无独立开关门时间、加减速、分区停车、峰值预测或全局最优保证；这些是明确的课程设计简化，不是已经实现的高级群控。

@@ -74,6 +74,17 @@
 #define IDC_RIGHT_HALL_CALL_TITLE         1120
 #define IDC_RIGHT_ALGORITHM_TITLE         1121
 #define IDC_ELEVATOR_STATE_LEGEND         1122
+#define IDC_TAB_LEFT                       1123
+#define IDC_MANUAL_SECTION                 1124
+#define IDC_MANUAL_DESCRIPTION             1125
+#define IDC_MANUAL_LABEL_FLOOR             1126
+#define IDC_MANUAL_LABEL_UP                1127
+#define IDC_MANUAL_LABEL_DOWN              1128
+#define IDC_EDIT_MANUAL_FLOOR              1129
+#define IDC_EDIT_MANUAL_UP                 1130
+#define IDC_EDIT_MANUAL_DOWN               1131
+#define IDC_BUTTON_ADD_PASSENGERS           1132
+#define IDC_MANUAL_FEEDBACK                 1133
 
 // 新对象的下一组默认值
 //
@@ -81,7 +92,7 @@
 #ifndef APSTUDIO_READONLY_SYMBOLS
 
 #define _APS_NEXT_RESOURCE_VALUE	129
-#define _APS_NEXT_CONTROL_VALUE		1123
+#define _APS_NEXT_CONTROL_VALUE		1134
 #define _APS_NEXT_SYMED_VALUE		101
 #define _APS_NEXT_COMMAND_VALUE		32771
 #endif
