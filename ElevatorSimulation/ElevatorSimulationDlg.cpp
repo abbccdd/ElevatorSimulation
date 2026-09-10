@@ -44,10 +44,6 @@ namespace
 		L"总时长（秒）", L"随机种子", L"仿真倍速"
 	};
 
-	constexpr const wchar_t* StatisticTitles[] = {
-		L"总生成", L"等待中", L"乘梯中", L"已到达", L"平均等待", L"最大等待"
-	};
-
 	const wchar_t* DirectionText(Direction direction)
 	{
 		switch (direction)
@@ -313,7 +309,7 @@ void CElevatorSimulationDlg::CreateUIFramework()
 	createFont(m_titleFont, 18, FW_BOLD);
 	createFont(m_sectionFont, 11, FW_SEMIBOLD);
 	createFont(m_pageTabFont, 10, FW_SEMIBOLD);
-	createFont(m_statValueFont, 14, FW_SEMIBOLD);
+	createFont(m_statValueFont, 11, FW_SEMIBOLD);
 
 	const DWORD labelStyle = WS_CHILD | WS_VISIBLE | SS_LEFT | SS_CENTERIMAGE;
 	m_headerTitle.Create(L"多电梯群控调度仿真系统", labelStyle, CRect(), this, IDC_HEADER_TITLE);
@@ -451,18 +447,8 @@ void CElevatorSimulationDlg::CreateUIFramework()
 	m_floorCoverageView.Create(this, IDC_FLOOR_COVERAGE_VIEW);
 	m_floorCoverageView.SetFont(GetFont());
 
-	for (std::size_t index = 0; index < m_statCards.size(); ++index)
-	{
-		m_statCards[index].Create(L"", WS_CHILD | WS_VISIBLE | WS_BORDER,
-			CRect(), this, IDC_STAT_CARD_FIRST + static_cast<UINT>(index));
-		m_statTitles[index].Create(StatisticTitles[index],
-			WS_CHILD | WS_VISIBLE | SS_CENTER | SS_CENTERIMAGE, CRect(), this,
-			IDC_STAT_TITLE_FIRST + static_cast<UINT>(index));
-		m_statValues[index].Create(index >= 4 ? L"0.00 秒" : L"0",
-			WS_CHILD | WS_VISIBLE | SS_CENTER | SS_CENTERIMAGE, CRect(), this,
-			IDC_STAT_VALUE_FIRST + static_cast<UINT>(index));
-		m_statValues[index].SetFont(&m_statValueFont);
-	}
+	m_kpiBar.Create(this, IDC_STAT_CARD_FIRST);
+	m_kpiBar.SetFonts(&m_pageTabFont, &m_statValueFont);
 
 	for (CWnd* child = GetWindow(GW_CHILD); child != nullptr; child = child->GetNextWindow())
 		child->SetFont(&m_bodyFont);
@@ -477,8 +463,7 @@ void CElevatorSimulationDlg::CreateUIFramework()
 	m_pageTabs.SetFont(&m_pageTabFont);
 	m_leftTabs.SetFont(&m_pageTabFont);
 	m_rightTabs.SetFont(&m_pageTabFont);
-	for (auto& statValue : m_statValues)
-		statValue.SetFont(&m_statValueFont);
+	m_kpiBar.SetFonts(&m_pageTabFont, &m_statValueFont);
 
 	for (int controlId : ParameterControlIds)
 		GetDlgItem(controlId)->ShowWindow(SW_SHOW);
@@ -513,9 +498,9 @@ void CElevatorSimulationDlg::RelayoutUI()
 	const int headerHeight = 64;
 	const int leftWidth = 260;
 	const int tabsHeight = 38;
-	const int statsHeight = 80;
+	const int statsHeight = 84;
 	const int contentTop = headerHeight + gap;
-	const int contentBottom = clientHeight - 28;
+	const int contentBottom = clientHeight - 16;
 	const int centerX = margin + leftWidth + gap;
 	const bool realTimePage = m_pageTabs.GetCurSel() == 0;
 	const int rightWidth = m_rightPanelExpanded ? 350 : 48;
@@ -529,14 +514,14 @@ void CElevatorSimulationDlg::RelayoutUI()
 	const int mainHeight = mainBottom - mainTop;
 	auto place = [&toDevice](CWnd& control, int x, int y, int width, int height)
 	{
-		control.MoveWindow(toDevice(x), toDevice(y), toDevice(width), toDevice(height), TRUE);
+		control.MoveWindow(toDevice(x), toDevice(y), toDevice(width), toDevice(height), FALSE);
 	};
 	auto move = [this, &toDevice](int controlId, int x, int y, int width, int height)
 	{
 		GetDlgItem(controlId)->MoveWindow(toDevice(x), toDevice(y),
-			toDevice(width), toDevice(height), TRUE);
+			toDevice(width), toDevice(height), FALSE);
 	};
-	m_pageTabs.SetPadding(CSize(toDevice(20), toDevice(7)));
+	m_pageTabs.SetPadding(CSize(toDevice(centerWidth < 720 ? 12 : 20), toDevice(7)));
 	m_leftTabs.SetPadding(CSize(toDevice(14), toDevice(6)));
 	m_rightTabs.SetPadding(CSize(toDevice(12), toDevice(6)));
 
@@ -554,8 +539,9 @@ void CElevatorSimulationDlg::RelayoutUI()
 	place(m_headerTraffic, headerInfoX, 33, headerInfoWidth, 24);
 
 	const int sidePanelTop = contentTop + tabsHeight + gap;
+	const bool compactSidePanel = mainBottom - sidePanelTop < 600;
 	place(m_leftTabs, margin, contentTop, leftWidth, tabsHeight);
-	place(m_leftPanel, margin, sidePanelTop, leftWidth, contentBottom - sidePanelTop);
+	place(m_leftPanel, margin, sidePanelTop, leftWidth, mainBottom - sidePanelTop);
 	const int leftInnerX = margin + 14;
 	const int leftInnerWidth = leftWidth - 28;
 	const int panelContentTop = sidePanelTop + 20;
@@ -563,8 +549,8 @@ void CElevatorSimulationDlg::RelayoutUI()
 	const int editX = leftInnerX + labelWidth;
 	const int editWidth = leftInnerWidth - labelWidth;
 	place(m_parameterSection, leftInnerX, panelContentTop, leftInnerWidth, 24);
-	const int firstRowY = panelContentTop + 29;
-	const int rowHeight = 29;
+	const int firstRowY = panelContentTop + (compactSidePanel ? 24 : 29);
+	const int rowHeight = compactSidePanel ? 23 : 29;
 	for (std::size_t index = 0; index < m_parameterLabels.size(); ++index)
 	{
 		const int rowY = firstRowY + static_cast<int>(index) * rowHeight;
@@ -579,20 +565,27 @@ void CElevatorSimulationDlg::RelayoutUI()
 	place(m_predictiveRebalancingCheck, leftInnerX, rebalanceY, leftInnerWidth, 24);
 
 	place(m_manualSection, leftInnerX, panelContentTop, leftInnerWidth, 24);
-	place(m_manualDescription, leftInnerX, panelContentTop + 31, leftInnerWidth, 50);
-	const int manualFirstRowY = panelContentTop + 94;
+	place(m_manualDescription, leftInnerX, panelContentTop + 31, leftInnerWidth,
+		compactSidePanel ? 42 : 50);
+	const int manualRowGap = compactSidePanel ? 34 : 38;
+	const int manualFirstRowY = panelContentTop + (compactSidePanel ? 83 : 94);
 	for (std::size_t index = 0; index < m_manualLabels.size(); ++index)
 	{
-		const int rowY = manualFirstRowY + static_cast<int>(index) * 38;
+		const int rowY = manualFirstRowY + static_cast<int>(index) * manualRowGap;
 		place(m_manualLabels[index], leftInnerX, rowY, labelWidth - 8, 28);
 	}
 	place(m_manualFloorEdit, editX, manualFirstRowY, editWidth, 28);
-	place(m_manualUpEdit, editX, manualFirstRowY + 38, editWidth, 28);
-	place(m_manualDownEdit, editX, manualFirstRowY + 76, editWidth, 28);
-	place(m_addPassengersButton, leftInnerX, manualFirstRowY + 126, leftInnerWidth, 38);
-	place(m_manualFeedback, leftInnerX, manualFirstRowY + 174, leftInnerWidth, 56);
+	place(m_manualUpEdit, editX, manualFirstRowY + manualRowGap, editWidth, 28);
+	place(m_manualDownEdit, editX, manualFirstRowY + manualRowGap * 2, editWidth, 28);
+	const int manualButtonY = manualFirstRowY + manualRowGap * 3 +
+		(compactSidePanel ? 10 : 12);
+	place(m_addPassengersButton, leftInnerX, manualButtonY, leftInnerWidth,
+		compactSidePanel ? 36 : 38);
+	place(m_manualFeedback, leftInnerX,
+		manualButtonY + (compactSidePanel ? 44 : 48), leftInnerWidth,
+		compactSidePanel ? 42 : 56);
 
-	const int speedButtonY = contentBottom - 43;
+	const int speedButtonY = mainBottom - 43;
 	const int speedY = speedButtonY - 28;
 	const int actionY = speedY - 91;
 	const int controlsY = actionY - 29;
@@ -612,7 +605,10 @@ void CElevatorSimulationDlg::RelayoutUI()
 			speedButtonWidth, 32);
 	}
 
-	const int pageTabsWidth = (std::min)(360, centerWidth);
+	const int legendPreferredWidth = 320;
+	const int pageTabsMinimumWidth = 260;
+	const int pageTabsWidth = (std::min)(360,
+		(std::max)(pageTabsMinimumWidth, centerWidth - gap - legendPreferredWidth));
 	place(m_pageTabs, centerX, navigationY, pageTabsWidth, tabsHeight);
 	place(m_elevatorStateLegend, centerX + pageTabsWidth + gap, navigationY,
 		(std::max)(0, centerWidth - pageTabsWidth - gap), tabsHeight);
@@ -622,7 +618,7 @@ void CElevatorSimulationDlg::RelayoutUI()
 		place(m_mainPanel, centerX, mainTop, centerWidth, mainHeight);
 		place(m_buildingView, 10, 22, centerWidth - 20, mainHeight - 32);
 
-		place(m_rightPanel, rightX, sidePanelTop, rightWidth, contentBottom - sidePanelTop);
+		place(m_rightPanel, rightX, sidePanelTop, rightWidth, mainBottom - sidePanelTop);
 		place(m_panelToggle, rightX + rightWidth - 43, contentTop + 5, 32, 28);
 		if (m_rightPanelExpanded)
 		{
@@ -630,7 +626,7 @@ void CElevatorSimulationDlg::RelayoutUI()
 			const int innerWidth = rightWidth - 24;
 			place(m_rightTabs, rightX, contentTop, rightWidth - 48, tabsHeight);
 			const int innerTop = sidePanelTop + 17;
-			const int innerBottom = contentBottom - 10;
+			const int innerBottom = mainBottom - 10;
 			const int sectionTitleHeight = 26;
 			const int bodyTop = innerTop + sectionTitleHeight;
 			place(m_rightHallCallTitle, innerX + 2, innerTop,
@@ -678,16 +674,7 @@ void CElevatorSimulationDlg::RelayoutUI()
 		}
 	}
 
-	const int statGap = 8;
-	const int statWidth = (centerWidth - statGap * 5) / 6;
-	for (std::size_t index = 0; index < m_statCards.size(); ++index)
-	{
-		const int statX = centerX + static_cast<int>(index) * (statWidth + statGap);
-		const int width = index + 1 == m_statCards.size() ? centerRight - statX : statWidth;
-		place(m_statCards[index], statX, statsY, width, statsHeight);
-		place(m_statTitles[index], statX + 4, statsY + 6, width - 8, 23);
-		place(m_statValues[index], statX + 4, statsY + 31, width - 8, 39);
-	}
+	place(m_kpiBar, margin, statsY, clientWidth - margin * 2, statsHeight);
 
 	if (m_rightPanelExpanded && m_hallCallList.GetHeaderCtrl() != nullptr)
 	{
@@ -708,6 +695,7 @@ void CElevatorSimulationDlg::RelayoutUI()
 		m_algorithmCandidateList.SetColumnWidth(4, 0);
 		m_algorithmCandidateList.SetColumnWidth(5, toDevice(listWidth * 34 / 100));
 	}
+	RedrawWindow(nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
 }
 
 void CElevatorSimulationDlg::UpdateLeftPanelVisibility()
@@ -1575,15 +1563,14 @@ void CElevatorSimulationDlg::RefreshSimulationView(bool forceBuildingRefresh)
 		m_rebuildingHallCallList = false;
 	}
 
-	CString statisticValues[6];
+	std::array<CString, 6> statisticValues;
 	statisticValues[0].Format(L"%zu", statistics.totalPassengerCount);
 	statisticValues[1].Format(L"%zu", statistics.waitingCount);
 	statisticValues[2].Format(L"%zu", statistics.ridingCount);
 	statisticValues[3].Format(L"%zu", statistics.arrivedCount);
 	statisticValues[4].Format(L"%.2f 秒", statistics.averageWaitingTime);
 	statisticValues[5].Format(L"%.2f 秒", statistics.maxWaitingTime);
-	for (std::size_t index = 0; index < m_statValues.size(); ++index)
-		SetTextIfChanged(m_statValues[index], statisticValues[index]);
+	m_kpiBar.SetValues(statisticValues);
 	UpdateControlStates(snapshot);
 }
 

@@ -136,9 +136,7 @@ private:
 	CStatic m_speedSection;
 	std::array<CStatic, 11> m_parameterLabels;
 	std::array<CButton, 4> m_speedButtons;
-	std::array<CStatic, 6> m_statCards;
-	std::array<DashboardStatTitle, 6> m_statTitles;
-	std::array<CStatic, 6> m_statValues;
+	DashboardKpiBar m_kpiBar;
 	bool m_uiReady = false;
 	bool m_rightPanelExpanded = true;
 	bool m_buildingRefreshScheduled = false;
